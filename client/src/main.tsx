@@ -1,0 +1,1726 @@
+import { FormEvent, StrictMode, useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  DoorOpen,
+  Edit3,
+  Eye,
+  KeyRound,
+  LogOut,
+  MapPin,
+  Plus,
+  RefreshCcw,
+  Save,
+  Settings,
+  ShieldCheck,
+  Trash2,
+  X,
+} from "lucide-react";
+import "./styles.css";
+
+type Role = "admin" | "viewer";
+type ConfigTab = "scripts" | "dms" | "rooms";
+
+type Session = {
+  role: Role;
+  token: string;
+};
+
+type ScriptRole = {
+  id: number;
+  scriptId: number;
+  name: string;
+  sortOrder: number;
+};
+
+type Script = {
+  id: number;
+  name: string;
+  durationHours: number;
+  maxParallelSessions: number;
+  isActive: boolean;
+  roles: ScriptRole[];
+};
+
+type DmRole = {
+  id: number;
+  dmId: number;
+  roleName: string;
+};
+
+type Dm = {
+  id: number;
+  name: string;
+  isActive: boolean;
+  roles: DmRole[];
+};
+
+type Room = {
+  id: number;
+  name: string;
+  isActive: boolean;
+};
+
+type ScheduleRole = {
+  id: number;
+  scheduleId: number;
+  roleName: string;
+  dmId: number;
+  dmName: string;
+  sortOrder: number;
+};
+
+type Schedule = {
+  id: number;
+  scriptId: number;
+  scriptName: string;
+  roomId: number;
+  roomName: string;
+  startAt: string;
+  endAt: string;
+  roomAvailableAt: string;
+  businessDate: string;
+  note: string;
+  roles: ScheduleRole[];
+};
+
+type AvailabilityRoom = {
+  id: number;
+  name: string;
+  isActive: boolean;
+  available: boolean;
+  reason: string;
+};
+
+type AvailabilityDm = {
+  id: number;
+  name: string;
+  isActive: boolean;
+  available: boolean;
+  selectedInPayload: boolean;
+  reason: string;
+};
+
+type Availability = {
+  startAt: string;
+  endAt: string;
+  roomAvailableAt: string;
+  businessDate: string;
+  conflicts: Array<{ code: string; message: string }>;
+  rooms: AvailabilityRoom[];
+  dms: AvailabilityDm[];
+};
+
+type ScheduleFormState = {
+  id?: number;
+  date: string;
+  scriptId: string;
+  startTime: string;
+  roomId: string;
+  note: string;
+  assignments: Record<string, string>;
+};
+
+type ScriptFormState = {
+  id?: number;
+  name: string;
+  durationHours: string;
+  maxParallelSessions: string;
+  rolesText: string;
+  isActive: boolean;
+};
+
+type DmFormState = {
+  id?: number;
+  name: string;
+  rolesText: string;
+  isActive: boolean;
+};
+
+type RoomFormState = {
+  id?: number;
+  name: string;
+  isActive: boolean;
+};
+
+const sessionStorageKey = "scheduler-session";
+
+const emptyScriptForm: ScriptFormState = {
+  name: "",
+  durationHours: "6",
+  maxParallelSessions: "1",
+  rolesText: "",
+  isActive: true,
+};
+
+const emptyDmForm: DmFormState = {
+  name: "",
+  rolesText: "",
+  isActive: true,
+};
+
+const emptyRoomForm: RoomFormState = {
+  name: "",
+  isActive: true,
+};
+
+function App() {
+  const [session, setSession] = useState<Session | null>(() => readStoredSession());
+  const [checkingSession, setCheckingSession] = useState(Boolean(session));
+
+  useEffect(() => {
+    if (!session) {
+      setCheckingSession(false);
+      return;
+    }
+
+    let isCurrent = true;
+
+    getCurrentUser(session.token)
+      .then((role) => {
+        if (isCurrent) {
+          setSession({ ...session, role });
+        }
+      })
+      .catch(() => {
+        if (isCurrent) {
+          clearStoredSession();
+          setSession(null);
+        }
+      })
+      .finally(() => {
+        if (isCurrent) {
+          setCheckingSession(false);
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  if (checkingSession) {
+    return (
+      <main className="app-shell">
+        <section className="login-panel">
+          <p className="eyebrow">剧本杀排班系统</p>
+          <h1>正在进入</h1>
+        </section>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return (
+      <main className="app-shell auth-shell">
+        <LoginView onLogin={setSession} />
+      </main>
+    );
+  }
+
+  return (
+    <main className="app-shell">
+      <header className="top-bar">
+        <div className="brand-group">
+          <div className="brand-mark" aria-hidden="true">
+            <CalendarDays size={28} />
+          </div>
+          <div>
+            <p className="eyebrow">剧本杀排班系统</p>
+            <h1>排班工作台</h1>
+          </div>
+        </div>
+        <div className="session-actions">
+          <span className="role-badge">
+            {session.role === "admin" ? <ShieldCheck size={16} /> : <Eye size={16} />}
+            {session.role === "admin" ? "管理权限" : "查看权限"}
+          </span>
+          <button
+            className="icon-button"
+            type="button"
+            title="退出登录"
+            aria-label="退出登录"
+            onClick={() => {
+              clearStoredSession();
+              setSession(null);
+            }}
+          >
+            <LogOut size={18} />
+          </button>
+        </div>
+      </header>
+      <Dashboard session={session} />
+    </main>
+  );
+}
+
+function LoginView({ onLogin }: { onLogin: (session: Session) => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSubmitting(true);
+
+    try {
+      const nextSession = await login(password);
+      storeSession(nextSession);
+      onLogin(nextSession);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "登录失败");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="login-panel">
+      <div className="brand-mark" aria-hidden="true">
+        <KeyRound size={28} />
+      </div>
+      <p className="eyebrow">剧本杀排班系统</p>
+      <h1>输入访问密码</h1>
+      <form className="login-form" onSubmit={handleSubmit}>
+        <label htmlFor="password">密码</label>
+        <input
+          id="password"
+          autoComplete="current-password"
+          autoFocus
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="请输入密码"
+        />
+        {error ? <p className="form-error">{error}</p> : null}
+        <button className="primary-button" disabled={submitting || !password} type="submit">
+          {submitting ? "登录中" : "进入系统"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function Dashboard({ session }: { session: Session }) {
+  const [activeTab, setActiveTab] = useState<ConfigTab>("scripts");
+
+  return (
+    <section className="workspace-grid">
+      <CalendarPanel canManage={session.role === "admin"} token={session.token} />
+      {session.role === "admin" ? (
+        <aside className="workspace-panel side-panel">
+          <div className="panel-title">
+            <Settings size={20} />
+            <h2>后台配置</h2>
+          </div>
+          <div className="admin-menu" role="tablist" aria-label="后台配置">
+            <button
+              className={activeTab === "scripts" ? "active" : ""}
+              type="button"
+              onClick={() => setActiveTab("scripts")}
+            >
+              剧本管理
+            </button>
+            <button
+              className={activeTab === "dms" ? "active" : ""}
+              type="button"
+              onClick={() => setActiveTab("dms")}
+            >
+              DM 管理
+            </button>
+            <button
+              className={activeTab === "rooms" ? "active" : ""}
+              type="button"
+              onClick={() => setActiveTab("rooms")}
+            >
+              房间管理
+            </button>
+          </div>
+          <AdminConfig token={session.token} activeTab={activeTab} />
+        </aside>
+      ) : (
+        <aside className="workspace-panel side-panel">
+          <div className="panel-title">
+            <DoorOpen size={20} />
+            <h2>查看模式</h2>
+          </div>
+          <p className="muted">当前账号仅可查看排班。</p>
+        </aside>
+      )}
+    </section>
+  );
+}
+
+function CalendarPanel({ canManage, token }: { canManage: boolean; token: string }) {
+  const [monthStart, setMonthStart] = useState(() => startOfMonth(new Date()));
+  const [selectedDate, setSelectedDate] = useState(() => toDateOnly(new Date()));
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+  const [creatingDate, setCreatingDate] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const monthLabel = `${monthStart.getFullYear()}年${monthStart.getMonth() + 1}月`;
+  const monthFrom = toDateOnly(monthStart);
+  const monthTo = toDateOnly(addMonths(monthStart, 1));
+  const calendarDays = useMemo(() => getCalendarDays(monthStart), [monthStart]);
+  const schedulesByDate = useMemo(() => groupSchedulesByDate(schedules), [schedules]);
+  const selectedSchedules = schedulesByDate.get(selectedDate) ?? [];
+
+  useEffect(() => {
+    loadSchedules();
+  }, [monthFrom, monthTo, token]);
+
+  async function loadSchedules() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const result = await apiFetch<Schedule[]>(
+        `/api/schedules?from=${monthFrom}&to=${monthTo}`,
+        { token },
+      );
+      setSchedules(result);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "排班加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function moveMonth(offset: number) {
+    const nextMonth = addMonths(monthStart, offset);
+    setMonthStart(nextMonth);
+    setSelectedDate(toDateOnly(nextMonth));
+  }
+
+  function goToday() {
+    const today = new Date();
+    setMonthStart(startOfMonth(today));
+    setSelectedDate(toDateOnly(today));
+  }
+
+  async function deleteSchedule(schedule: Schedule) {
+    if (!window.confirm(`确认删除《${schedule.scriptName}》这场排班吗？`)) {
+      return;
+    }
+
+    setError("");
+
+    try {
+      await apiFetch<{ ok: boolean }>(`/api/admin/schedules/${schedule.id}`, {
+        token,
+        method: "DELETE",
+      });
+      await loadSchedules();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "删除失败");
+    }
+  }
+
+  return (
+    <article className="workspace-panel main-panel calendar-panel">
+      <div className="calendar-head">
+        <div className="panel-title">
+          <CalendarDays size={20} />
+          <h2>日历排班</h2>
+        </div>
+        <div className="calendar-actions">
+          {canManage ? (
+            <button
+              className="primary-button compact-button"
+              type="button"
+              onClick={() => setCreatingDate(selectedDate)}
+            >
+              <Plus size={16} />
+              新增
+            </button>
+          ) : null}
+          <button
+            className="icon-button"
+            type="button"
+            title="上个月"
+            aria-label="上个月"
+            onClick={() => moveMonth(-1)}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <button className="ghost-button" type="button" onClick={goToday}>
+            今天
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            title="下个月"
+            aria-label="下个月"
+            onClick={() => moveMonth(1)}
+          >
+            <ChevronRight size={18} />
+          </button>
+          <button className="ghost-button" type="button" onClick={loadSchedules} disabled={loading}>
+            <RefreshCcw size={16} />
+            刷新
+          </button>
+        </div>
+      </div>
+      <div className="month-title">
+        <strong>{monthLabel}</strong>
+        <span>{loading ? "加载中" : `${schedules.length} 场`}</span>
+      </div>
+      {error ? <p className="form-error">{error}</p> : null}
+      <div className="calendar-grid" aria-label={`${monthLabel}排班`}>
+        {["一", "二", "三", "四", "五", "六", "日"].map((weekday) => (
+          <div className="weekday" key={weekday}>
+            {weekday}
+          </div>
+        ))}
+        {calendarDays.map((date) => {
+          const dateKey = toDateOnly(date);
+          const daySchedules = schedulesByDate.get(dateKey) ?? [];
+          const isCurrentMonth = date.getMonth() === monthStart.getMonth();
+          const isSelected = selectedDate === dateKey;
+          const isToday = dateKey === toDateOnly(new Date());
+
+          return (
+            <button
+              className={[
+                "calendar-day",
+                isCurrentMonth ? "" : "muted-day",
+                isSelected ? "selected" : "",
+                isToday ? "today" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              key={dateKey}
+              type="button"
+              onClick={() => setSelectedDate(dateKey)}
+            >
+              <span className="day-number">{date.getDate()}</span>
+              <div className="day-events">
+                {daySchedules.slice(0, 3).map((schedule) => (
+                  <span className="day-event" key={schedule.id}>
+                    {formatTime(schedule.startAt)} {schedule.scriptName}
+                  </span>
+                ))}
+                {daySchedules.length > 3 ? (
+                  <span className="day-more">+{daySchedules.length - 3} 场</span>
+                ) : null}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <section className="day-detail">
+        <div className="day-detail-head">
+          <h3>{formatDateLabel(selectedDate)}</h3>
+          <span>{selectedSchedules.length} 场</span>
+        </div>
+        {selectedSchedules.length ? (
+          <div className="schedule-list">
+            {selectedSchedules.map((schedule) => (
+              <ScheduleCard
+                canManage={canManage}
+                key={schedule.id}
+                schedule={schedule}
+                onDelete={() => deleteSchedule(schedule)}
+                onEdit={() => setEditingSchedule(schedule)}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="empty-list">当天暂无排班</p>
+        )}
+      </section>
+      {canManage && (creatingDate || editingSchedule) ? (
+        <ScheduleModal
+          initialDate={creatingDate ?? selectedDate}
+          schedule={editingSchedule}
+          token={token}
+          onClose={() => {
+            setCreatingDate(null);
+            setEditingSchedule(null);
+          }}
+          onSaved={async () => {
+            setCreatingDate(null);
+            setEditingSchedule(null);
+            await loadSchedules();
+          }}
+        />
+      ) : null}
+    </article>
+  );
+}
+
+function ScheduleCard({
+  canManage,
+  onDelete,
+  onEdit,
+  schedule,
+}: {
+  canManage: boolean;
+  onDelete: () => void;
+  onEdit: () => void;
+  schedule: Schedule;
+}) {
+  return (
+    <article className="schedule-card">
+      <div className="schedule-card-head">
+        <strong>{schedule.scriptName}</strong>
+        <div className="schedule-card-actions">
+          <span>{schedule.businessDate}</span>
+          {canManage ? (
+            <>
+              <button
+                className="icon-button small-icon-button"
+                type="button"
+                title="编辑排班"
+                aria-label="编辑排班"
+                onClick={onEdit}
+              >
+                <Edit3 size={15} />
+              </button>
+              <button
+                className="icon-button small-icon-button danger-icon-button"
+                type="button"
+                title="删除排班"
+                aria-label="删除排班"
+                onClick={onDelete}
+              >
+                <Trash2 size={15} />
+              </button>
+            </>
+          ) : null}
+        </div>
+      </div>
+      <div className="schedule-meta">
+        <span>
+          <Clock size={14} />
+          {formatTime(schedule.startAt)} - {formatTime(schedule.endAt)}
+        </span>
+        <span>
+          <MapPin size={14} />
+          {schedule.roomName}
+        </span>
+      </div>
+      <div className="role-grid">
+        {schedule.roles.map((role) => (
+          <span key={role.id}>
+            {role.roleName}：{role.dmName}
+          </span>
+        ))}
+      </div>
+      {schedule.note ? <p className="schedule-note">{schedule.note}</p> : null}
+    </article>
+  );
+}
+
+function ScheduleModal({
+  initialDate,
+  onClose,
+  onSaved,
+  schedule,
+  token,
+}: {
+  initialDate: string;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+  schedule: Schedule | null;
+  token: string;
+}) {
+  const [scripts, setScripts] = useState<Script[]>([]);
+  const [dms, setDms] = useState<Dm[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [form, setForm] = useState<ScheduleFormState>(() =>
+    schedule ? formFromSchedule(schedule) : createEmptyScheduleForm(initialDate),
+  );
+  const [availability, setAvailability] = useState<Availability | null>(null);
+  const [loadingConfig, setLoadingConfig] = useState(false);
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const selectedScript = scripts.find((script) => String(script.id) === form.scriptId);
+  const selectedRoom = rooms.find((room) => String(room.id) === form.roomId);
+  const roleNames = selectedScript?.roles.map((role) => role.name) ?? [];
+  const assignedDmIds = new Set(Object.values(form.assignments).filter(Boolean));
+  const availabilityRooms = new Map(availability?.rooms.map((room) => [room.id, room]) ?? []);
+  const availabilityDms = new Map(availability?.dms.map((dm) => [dm.id, dm]) ?? []);
+  const missingSetupMessages = [
+    scripts.length ? "" : "请先在右侧后台配置里添加剧本",
+    rooms.length ? "" : "请先在右侧后台配置里添加房间",
+    dms.length ? "" : "请先在右侧后台配置里添加 DM",
+  ].filter(Boolean);
+  const canSaveSchedule =
+    !saving &&
+    !loadingConfig &&
+    Boolean(selectedScript) &&
+    Boolean(selectedRoom) &&
+    roleNames.length > 0 &&
+    roleNames.every((roleName) => form.assignments[roleName]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    async function loadConfig() {
+      setLoadingConfig(true);
+      setError("");
+
+      try {
+        const [nextScripts, nextDms, nextRooms] = await Promise.all([
+          apiFetch<Script[]>("/api/admin/scripts", { token }),
+          apiFetch<Dm[]>("/api/admin/dms", { token }),
+          apiFetch<Room[]>("/api/admin/rooms", { token }),
+        ]);
+
+        if (!isCurrent) {
+          return;
+        }
+
+        setScripts(nextScripts);
+        setDms(nextDms);
+        setRooms(nextRooms);
+
+        setForm((current) => ({
+          ...current,
+          scriptId: current.scriptId || String(nextScripts.find((item) => item.isActive)?.id ?? ""),
+          roomId: current.roomId || String(nextRooms.find((item) => item.isActive)?.id ?? ""),
+        }));
+      } catch (caughtError) {
+        if (isCurrent) {
+          setError(caughtError instanceof Error ? caughtError.message : "配置加载失败");
+        }
+      } finally {
+        if (isCurrent) {
+          setLoadingConfig(false);
+        }
+      }
+    }
+
+    loadConfig();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (!selectedScript) {
+      return;
+    }
+
+    setForm((current) => {
+      const nextAssignments: Record<string, string> = {};
+
+      for (const role of selectedScript.roles) {
+        nextAssignments[role.name] = current.assignments[role.name] ?? "";
+      }
+
+      return {
+        ...current,
+        assignments: nextAssignments,
+      };
+    });
+  }, [selectedScript?.id]);
+
+  useEffect(() => {
+    if (!form.scriptId || !form.roomId || !form.date || !form.startTime) {
+      setAvailability(null);
+      return;
+    }
+
+    let isCurrent = true;
+
+    async function checkAvailability() {
+      setCheckingAvailability(true);
+
+      try {
+        const result = await apiFetch<Availability>("/api/admin/schedules/availability", {
+          token,
+          method: "POST",
+          body: buildSchedulePayload(form, schedule?.id),
+        });
+
+        if (isCurrent) {
+          setAvailability(result);
+        }
+      } catch (caughtError) {
+        if (isCurrent) {
+          setAvailability(null);
+          setError(caughtError instanceof Error ? caughtError.message : "可用性检查失败");
+        }
+      } finally {
+        if (isCurrent) {
+          setCheckingAvailability(false);
+        }
+      }
+    }
+
+    checkAvailability();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [form.scriptId, form.roomId, form.date, form.startTime, JSON.stringify(form.assignments), token]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+
+    try {
+      await apiFetch<Schedule>(`/api/admin/schedules${form.id ? `/${form.id}` : ""}`, {
+        token,
+        method: form.id ? "PUT" : "POST",
+        body: buildSchedulePayload(form),
+      });
+      await onSaved();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "保存排班失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function updateScript(scriptId: string) {
+    const nextScript = scripts.find((script) => String(script.id) === scriptId);
+    const nextAssignments: Record<string, string> = {};
+
+    for (const role of nextScript?.roles ?? []) {
+      nextAssignments[role.name] = form.assignments[role.name] ?? "";
+    }
+
+    setForm({
+      ...form,
+      scriptId,
+      assignments: nextAssignments,
+    });
+  }
+
+  function updateAssignment(roleName: string, dmId: string) {
+    setForm({
+      ...form,
+      assignments: {
+        ...form.assignments,
+        [roleName]: dmId,
+      },
+    });
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel" role="dialog" aria-modal="true" aria-label="排班表单">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">{form.id ? "编辑排班" : "新增排班"}</p>
+            <h2>{selectedScript?.name ?? "选择剧本"}</h2>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            title="关闭"
+            aria-label="关闭"
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        {missingSetupMessages.length ? (
+          <div className="setup-warning">
+            {missingSetupMessages.map((message) => (
+              <p key={message}>{message}</p>
+            ))}
+          </div>
+        ) : null}
+        <form className="schedule-form" onSubmit={handleSubmit}>
+          <div className="form-row three-columns">
+            <label>
+              日期
+              <input
+                type="date"
+                value={form.date}
+                onChange={(event) => setForm({ ...form, date: event.target.value })}
+              />
+            </label>
+            <label>
+              开场时间
+              <select
+                value={form.startTime}
+                onChange={(event) => setForm({ ...form, startTime: event.target.value })}
+              >
+                {getHalfHourOptions().map((time) => (
+                  <option key={time} value={time}>
+                    {time}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              剧本
+              <select
+                disabled={loadingConfig || !scripts.length}
+                value={form.scriptId}
+                onChange={(event) => updateScript(event.target.value)}
+              >
+                <option value="">{scripts.length ? "请选择" : "暂无剧本，请先添加"}</option>
+                {scripts.map((script) => (
+                  <option
+                    disabled={!script.isActive && String(script.id) !== form.scriptId}
+                    key={script.id}
+                    value={script.id}
+                  >
+                    {script.name}
+                    {script.isActive ? "" : "（停用）"}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="form-row">
+            <label>
+              房间
+              <select
+                disabled={!rooms.length}
+                value={form.roomId}
+                onChange={(event) => setForm({ ...form, roomId: event.target.value })}
+              >
+                <option value="">{rooms.length ? "请选择" : "暂无房间，请先添加"}</option>
+                {rooms.map((room) => {
+                  const optionState = availabilityRooms.get(room.id);
+                  const disabled =
+                    (!room.isActive || optionState?.available === false) &&
+                    String(room.id) !== form.roomId;
+
+                  return (
+                    <option disabled={disabled} key={room.id} value={room.id}>
+                      {room.name}
+                      {getOptionReason(room.isActive, optionState?.available, optionState?.reason)}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <div className="computed-time">
+              <span>结束时间</span>
+              <strong>{availability ? formatTime(availability.endAt) : "--:--"}</strong>
+              <small>
+                房间占用至 {availability ? formatTime(availability.roomAvailableAt) : "--:--"}
+              </small>
+            </div>
+          </div>
+          <div className="assignment-panel">
+            <div className="assignment-head">
+              <h3>角色 DM</h3>
+              <span>{checkingAvailability ? "检查中" : `${roleNames.length} 个角色`}</span>
+            </div>
+            {roleNames.length ? (
+              <div className="assignment-grid">
+                {roleNames.map((roleName) => (
+                  <label key={roleName}>
+                    {roleName}
+                    <select
+                      value={form.assignments[roleName] ?? ""}
+                      onChange={(event) => updateAssignment(roleName, event.target.value)}
+                    >
+                      <option value="">请选择 DM</option>
+                      {dms.map((dm) => {
+                        const selectedByOtherRole =
+                          assignedDmIds.has(String(dm.id)) &&
+                          form.assignments[roleName] !== String(dm.id);
+                        const dmState = availabilityDms.get(dm.id);
+                        const canPlayRole = dm.roles.some((role) => role.roleName === roleName);
+                        const disabled =
+                          !dm.isActive ||
+                          !canPlayRole ||
+                          selectedByOtherRole ||
+                          dmState?.available === false;
+
+                        return (
+                          <option disabled={disabled} key={dm.id} value={dm.id}>
+                            {dm.name}
+                            {getDmOptionReason({
+                              canPlayRole,
+                              dm,
+                              dmState,
+                              selectedByOtherRole,
+                            })}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-list">
+                {scripts.length ? "请先选择剧本" : "请先在后台配置里添加剧本和角色"}
+              </p>
+            )}
+            {roleNames.length && !dms.length ? (
+              <p className="empty-list">请先在后台配置里添加 DM</p>
+            ) : null}
+          </div>
+          <label>
+            备注
+            <textarea
+              value={form.note}
+              onChange={(event) => setForm({ ...form, note: event.target.value })}
+              placeholder="客户昵称、人数、电话、特殊要求等"
+            />
+          </label>
+          {availability?.conflicts.length ? (
+            <div className="conflict-list">
+              {availability.conflicts.map((conflict) => (
+                <p key={`${conflict.code}-${conflict.message}`}>{conflict.message}</p>
+              ))}
+            </div>
+          ) : null}
+          {error ? <p className="form-error">{error}</p> : null}
+          <div className="modal-actions">
+            <button className="ghost-button" type="button" onClick={onClose}>
+              取消
+            </button>
+            <button className="primary-button" disabled={!canSaveSchedule} type="submit">
+              <Save size={16} />
+              {saving ? "保存中" : "保存排班"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function AdminConfig({ token, activeTab }: { token: string; activeTab: ConfigTab }) {
+  const [scripts, setScripts] = useState<Script[]>([]);
+  const [dms, setDms] = useState<Dm[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [scriptForm, setScriptForm] = useState<ScriptFormState>(emptyScriptForm);
+  const [dmForm, setDmForm] = useState<DmFormState>(emptyDmForm);
+  const [roomForm, setRoomForm] = useState<RoomFormState>(emptyRoomForm);
+
+  const allScriptRoleNames = useMemo(() => {
+    return Array.from(
+      new Set(
+        scripts
+          .flatMap((script) => script.roles.map((role) => role.name))
+          .filter(Boolean),
+      ),
+    ).sort((left, right) => left.localeCompare(right, "zh-CN"));
+  }, [scripts]);
+
+  useEffect(() => {
+    loadAll();
+  }, []);
+
+  async function loadAll() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const [nextScripts, nextDms, nextRooms] = await Promise.all([
+        apiFetch<Script[]>("/api/admin/scripts", { token }),
+        apiFetch<Dm[]>("/api/admin/dms", { token }),
+        apiFetch<Room[]>("/api/admin/rooms", { token }),
+      ]);
+      setScripts(nextScripts);
+      setDms(nextDms);
+      setRooms(nextRooms);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveScript(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+
+    try {
+      await apiFetch<Script>(`/api/admin/scripts${scriptForm.id ? `/${scriptForm.id}` : ""}`, {
+        token,
+        method: scriptForm.id ? "PUT" : "POST",
+        body: {
+          name: scriptForm.name,
+          durationHours: Number(scriptForm.durationHours),
+          maxParallelSessions: Number(scriptForm.maxParallelSessions),
+          roles: splitTextList(scriptForm.rolesText),
+          isActive: scriptForm.isActive,
+        },
+      });
+      setScriptForm(emptyScriptForm);
+      setMessage("剧本已保存");
+      await loadAll();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "保存失败");
+    }
+  }
+
+  async function saveDm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+
+    try {
+      await apiFetch<Dm>(`/api/admin/dms${dmForm.id ? `/${dmForm.id}` : ""}`, {
+        token,
+        method: dmForm.id ? "PUT" : "POST",
+        body: {
+          name: dmForm.name,
+          roles: splitTextList(dmForm.rolesText),
+          isActive: dmForm.isActive,
+        },
+      });
+      setDmForm(emptyDmForm);
+      setMessage("DM 已保存");
+      await loadAll();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "保存失败");
+    }
+  }
+
+  async function saveRoom(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+
+    try {
+      await apiFetch<Room>(`/api/admin/rooms${roomForm.id ? `/${roomForm.id}` : ""}`, {
+        token,
+        method: roomForm.id ? "PUT" : "POST",
+        body: roomForm,
+      });
+      setRoomForm(emptyRoomForm);
+      setMessage("房间已保存");
+      await loadAll();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "保存失败");
+    }
+  }
+
+  return (
+    <div className="config-panel">
+      <div className="config-toolbar">
+        <button className="ghost-button" type="button" onClick={loadAll} disabled={loading}>
+          <RefreshCcw size={16} />
+          刷新
+        </button>
+      </div>
+      {error ? <p className="form-error">{error}</p> : null}
+      {message ? <p className="form-success">{message}</p> : null}
+      {activeTab === "scripts" ? (
+        <ScriptConfig
+          form={scriptForm}
+          scripts={scripts}
+          loading={loading}
+          onChange={setScriptForm}
+          onSubmit={saveScript}
+        />
+      ) : null}
+      {activeTab === "dms" ? (
+        <DmConfig
+          form={dmForm}
+          dms={dms}
+          loading={loading}
+          scriptRoleNames={allScriptRoleNames}
+          onChange={setDmForm}
+          onSubmit={saveDm}
+        />
+      ) : null}
+      {activeTab === "rooms" ? (
+        <RoomConfig
+          form={roomForm}
+          rooms={rooms}
+          loading={loading}
+          onChange={setRoomForm}
+          onSubmit={saveRoom}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ScriptConfig({
+  form,
+  scripts,
+  loading,
+  onChange,
+  onSubmit,
+}: {
+  form: ScriptFormState;
+  scripts: Script[];
+  loading: boolean;
+  onChange: (form: ScriptFormState) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <>
+      <form className="config-form" onSubmit={onSubmit}>
+        <h3>{form.id ? "编辑剧本" : "新增剧本"}</h3>
+        <label>
+          剧本名
+          <input
+            value={form.name}
+            onChange={(event) => onChange({ ...form, name: event.target.value })}
+            placeholder="例如：长安夜雨"
+          />
+        </label>
+        <div className="form-row">
+          <label>
+            时长
+            <input
+              min="1"
+              step="1"
+              type="number"
+              value={form.durationHours}
+              onChange={(event) => onChange({ ...form, durationHours: event.target.value })}
+            />
+          </label>
+          <label>
+            最多车数
+            <input
+              min="1"
+              step="1"
+              type="number"
+              value={form.maxParallelSessions}
+              onChange={(event) =>
+                onChange({ ...form, maxParallelSessions: event.target.value })
+              }
+            />
+          </label>
+        </div>
+        <label>
+          角色名
+          <textarea
+            value={form.rolesText}
+            onChange={(event) => onChange({ ...form, rolesText: event.target.value })}
+            placeholder="每行一个角色，也可以用逗号分隔"
+          />
+        </label>
+        <label className="switch-line">
+          <input
+            checked={form.isActive}
+            type="checkbox"
+            onChange={(event) => onChange({ ...form, isActive: event.target.checked })}
+          />
+          启用
+        </label>
+        <FormActions editing={Boolean(form.id)} loading={loading} onCancel={() => onChange(emptyScriptForm)} />
+      </form>
+      <RecordList
+        emptyText="还没有剧本"
+        items={scripts}
+        renderItem={(script) => (
+          <div className="record-card" key={script.id}>
+            <div>
+              <div className="record-title">
+                {script.name}
+                <StatusPill active={script.isActive} />
+              </div>
+              <p>
+                {script.durationHours} 小时 · 同时最多 {script.maxParallelSessions} 车
+              </p>
+              <div className="tag-list">
+                {script.roles.map((role) => (
+                  <span key={role.id}>{role.name}</span>
+                ))}
+              </div>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              title="编辑剧本"
+              aria-label="编辑剧本"
+              onClick={() =>
+                onChange({
+                  id: script.id,
+                  name: script.name,
+                  durationHours: String(script.durationHours),
+                  maxParallelSessions: String(script.maxParallelSessions),
+                  rolesText: script.roles.map((role) => role.name).join("\n"),
+                  isActive: script.isActive,
+                })
+              }
+            >
+              <Edit3 size={16} />
+            </button>
+          </div>
+        )}
+      />
+    </>
+  );
+}
+
+function DmConfig({
+  form,
+  dms,
+  loading,
+  scriptRoleNames,
+  onChange,
+  onSubmit,
+}: {
+  form: DmFormState;
+  dms: Dm[];
+  loading: boolean;
+  scriptRoleNames: string[];
+  onChange: (form: DmFormState) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <>
+      <form className="config-form" onSubmit={onSubmit}>
+        <h3>{form.id ? "编辑 DM" : "新增 DM"}</h3>
+        <label>
+          DM 名称
+          <input
+            value={form.name}
+            onChange={(event) => onChange({ ...form, name: event.target.value })}
+            placeholder="例如：小周"
+          />
+        </label>
+        <label>
+          会的角色
+          <textarea
+            value={form.rolesText}
+            onChange={(event) => onChange({ ...form, rolesText: event.target.value })}
+            placeholder="每行一个角色，也可以用逗号分隔"
+          />
+        </label>
+        {scriptRoleNames.length ? (
+          <div className="quick-roles">
+            {scriptRoleNames.map((roleName) => (
+              <button
+                key={roleName}
+                type="button"
+                onClick={() =>
+                  onChange({
+                    ...form,
+                    rolesText: mergeTextItem(form.rolesText, roleName),
+                  })
+                }
+              >
+                <Plus size={14} />
+                {roleName}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <label className="switch-line">
+          <input
+            checked={form.isActive}
+            type="checkbox"
+            onChange={(event) => onChange({ ...form, isActive: event.target.checked })}
+          />
+          在职/启用
+        </label>
+        <FormActions editing={Boolean(form.id)} loading={loading} onCancel={() => onChange(emptyDmForm)} />
+      </form>
+      <RecordList
+        emptyText="还没有 DM"
+        items={dms}
+        renderItem={(dm) => (
+          <div className="record-card" key={dm.id}>
+            <div>
+              <div className="record-title">
+                {dm.name}
+                <StatusPill active={dm.isActive} />
+              </div>
+              <div className="tag-list">
+                {dm.roles.map((role) => (
+                  <span key={role.id}>{role.roleName}</span>
+                ))}
+              </div>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              title="编辑 DM"
+              aria-label="编辑 DM"
+              onClick={() =>
+                onChange({
+                  id: dm.id,
+                  name: dm.name,
+                  rolesText: dm.roles.map((role) => role.roleName).join("\n"),
+                  isActive: dm.isActive,
+                })
+              }
+            >
+              <Edit3 size={16} />
+            </button>
+          </div>
+        )}
+      />
+    </>
+  );
+}
+
+function RoomConfig({
+  form,
+  rooms,
+  loading,
+  onChange,
+  onSubmit,
+}: {
+  form: RoomFormState;
+  rooms: Room[];
+  loading: boolean;
+  onChange: (form: RoomFormState) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <>
+      <form className="config-form" onSubmit={onSubmit}>
+        <h3>{form.id ? "编辑房间" : "新增房间"}</h3>
+        <label>
+          房间名
+          <input
+            value={form.name}
+            onChange={(event) => onChange({ ...form, name: event.target.value })}
+            placeholder="例如：一号房"
+          />
+        </label>
+        <label className="switch-line">
+          <input
+            checked={form.isActive}
+            type="checkbox"
+            onChange={(event) => onChange({ ...form, isActive: event.target.checked })}
+          />
+          启用
+        </label>
+        <FormActions editing={Boolean(form.id)} loading={loading} onCancel={() => onChange(emptyRoomForm)} />
+      </form>
+      <RecordList
+        emptyText="还没有房间"
+        items={rooms}
+        renderItem={(room) => (
+          <div className="record-card" key={room.id}>
+            <div className="record-title">
+              {room.name}
+              <StatusPill active={room.isActive} />
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              title="编辑房间"
+              aria-label="编辑房间"
+              onClick={() =>
+                onChange({
+                  id: room.id,
+                  name: room.name,
+                  isActive: room.isActive,
+                })
+              }
+            >
+              <Edit3 size={16} />
+            </button>
+          </div>
+        )}
+      />
+    </>
+  );
+}
+
+function FormActions({
+  editing,
+  loading,
+  onCancel,
+}: {
+  editing: boolean;
+  loading: boolean;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="form-actions">
+      <button className="primary-button" disabled={loading} type="submit">
+        <Save size={16} />
+        保存
+      </button>
+      {editing ? (
+        <button className="ghost-button" type="button" onClick={onCancel}>
+          取消编辑
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function RecordList<T>({
+  emptyText,
+  items,
+  renderItem,
+}: {
+  emptyText: string;
+  items: T[];
+  renderItem: (item: T) => React.ReactNode;
+}) {
+  if (!items.length) {
+    return <p className="empty-list">{emptyText}</p>;
+  }
+
+  return <div className="record-list">{items.map(renderItem)}</div>;
+}
+
+function StatusPill({ active }: { active: boolean }) {
+  return <span className={active ? "status-pill active" : "status-pill"}>{active ? "启用" : "停用"}</span>;
+}
+
+async function login(password: string): Promise<Session> {
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ password }),
+  });
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(result.message ?? "登录失败");
+  }
+
+  return result;
+}
+
+async function getCurrentUser(token: string): Promise<Role> {
+  const response = await fetch("/api/auth/me", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error("登录状态已失效");
+  }
+
+  const result = await response.json();
+  return result.role;
+}
+
+async function apiFetch<T>(
+  url: string,
+  options: {
+    token: string;
+    method?: string;
+    body?: unknown;
+  },
+): Promise<T> {
+  const response = await fetch(url, {
+    method: options.method ?? "GET",
+    headers: {
+      Authorization: `Bearer ${options.token}`,
+      "Content-Type": "application/json",
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(result.message ?? "请求失败");
+  }
+
+  return result;
+}
+
+function splitTextList(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/[,\n，、]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function mergeTextItem(text: string, item: string) {
+  return Array.from(new Set([...splitTextList(text), item])).join("\n");
+}
+
+function createEmptyScheduleForm(date: string): ScheduleFormState {
+  return {
+    date,
+    scriptId: "",
+    startTime: "10:00",
+    roomId: "",
+    note: "",
+    assignments: {},
+  };
+}
+
+function formFromSchedule(schedule: Schedule): ScheduleFormState {
+  return {
+    id: schedule.id,
+    date: schedule.startAt.slice(0, 10),
+    scriptId: String(schedule.scriptId),
+    startTime: formatTime(schedule.startAt),
+    roomId: String(schedule.roomId),
+    note: schedule.note,
+    assignments: Object.fromEntries(
+      schedule.roles.map((role) => [role.roleName, String(role.dmId)]),
+    ),
+  };
+}
+
+function buildSchedulePayload(form: ScheduleFormState, excludeId?: number) {
+  return {
+    excludeId,
+    scriptId: Number(form.scriptId),
+    roomId: Number(form.roomId),
+    date: form.date,
+    startTime: form.startTime,
+    note: form.note,
+    assignments: Object.entries(form.assignments)
+      .filter(([_roleName, dmId]) => dmId)
+      .map(([roleName, dmId]) => ({
+        roleName,
+        dmId: Number(dmId),
+      })),
+  };
+}
+
+function getHalfHourOptions() {
+  const options: string[] = [];
+
+  for (let hour = 0; hour < 24; hour += 1) {
+    for (const minute of ["00", "30"]) {
+      options.push(`${String(hour).padStart(2, "0")}:${minute}`);
+    }
+  }
+
+  return options;
+}
+
+function getOptionReason(isActive: boolean, available?: boolean, reason?: string) {
+  if (!isActive) {
+    return "（停用）";
+  }
+
+  if (available === false) {
+    return `（${reason || "不可用"}）`;
+  }
+
+  return "";
+}
+
+function getDmOptionReason({
+  canPlayRole,
+  dm,
+  dmState,
+  selectedByOtherRole,
+}: {
+  canPlayRole: boolean;
+  dm: Dm;
+  dmState?: AvailabilityDm;
+  selectedByOtherRole: boolean;
+}) {
+  if (!dm.isActive) {
+    return "（停用）";
+  }
+
+  if (!canPlayRole) {
+    return "（不会该角色）";
+  }
+
+  if (selectedByOtherRole) {
+    return "（本场已选）";
+  }
+
+  if (dmState?.available === false) {
+    return `（${dmState.reason || "不可用"}）`;
+  }
+
+  return "";
+}
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, offset: number) {
+  return new Date(date.getFullYear(), date.getMonth() + offset, 1);
+}
+
+function addDays(date: Date, offset: number) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + offset);
+}
+
+function getCalendarDays(monthStart: Date) {
+  const firstDay = startOfMonth(monthStart);
+  const mondayFirstOffset = (firstDay.getDay() + 6) % 7;
+  const gridStart = addDays(firstDay, -mondayFirstOffset);
+
+  return Array.from({ length: 42 }, (_item, index) => addDays(gridStart, index));
+}
+
+function groupSchedulesByDate(schedules: Schedule[]) {
+  const grouped = new Map<string, Schedule[]>();
+
+  for (const schedule of schedules) {
+    const dateKey = schedule.startAt.slice(0, 10);
+    const current = grouped.get(dateKey) ?? [];
+    current.push(schedule);
+    grouped.set(dateKey, current);
+  }
+
+  for (const items of grouped.values()) {
+    items.sort((left, right) => left.startAt.localeCompare(right.startAt));
+  }
+
+  return grouped;
+}
+
+function toDateOnly(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatTime(value: string) {
+  return value.slice(11, 16);
+}
+
+function formatDateLabel(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  const weekday = ["日", "一", "二", "三", "四", "五", "六"][date.getDay()];
+  return `${date.getMonth() + 1}月${date.getDate()}日 周${weekday}`;
+}
+
+function readStoredSession(): Session | null {
+  const value = localStorage.getItem(sessionStorageKey);
+
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value) as Session;
+  } catch {
+    clearStoredSession();
+    return null;
+  }
+}
+
+function storeSession(session: Session) {
+  localStorage.setItem(sessionStorageKey, JSON.stringify(session));
+}
+
+function clearStoredSession() {
+  localStorage.removeItem(sessionStorageKey);
+}
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);

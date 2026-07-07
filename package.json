@@ -1,0 +1,19 @@
+{
+  "name": "murder-mystery-scheduler",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "db:init": "npm --workspace server run db:init",
+    "dev": "node scripts/dev.mjs",
+    "dev:client": "npm --workspace client run dev",
+    "dev:server": "npm --workspace server run dev",
+    "build": "npm --workspace client run build",
+    "start": "npm --workspace server run start",
+    "test:smoke": "node scripts/smoke-test.mjs"
+  },
+  "workspaces": [
+    "client",
+    "server"
+  ]
+}
