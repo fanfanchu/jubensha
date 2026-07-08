@@ -54,6 +54,8 @@ app.post("/api/admin/schedules/availability", scheduleHandlers.getAvailability);
 app.post("/api/admin/schedules", scheduleHandlers.createSchedule);
 app.put("/api/admin/schedules/:id", scheduleHandlers.updateSchedule);
 app.delete("/api/admin/schedules/:id", scheduleHandlers.deleteSchedule);
+app.get("/api/admin/reports/monthly.xlsx", scheduleHandlers.exportMonthlyExcel);
+app.get("/api/admin/reports/dm-summary", scheduleHandlers.getDmSummary);
 
 app.get("/api/health", (_request, response) => {
   response.json({

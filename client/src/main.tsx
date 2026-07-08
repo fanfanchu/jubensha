@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Download,
   DoorOpen,
   Edit3,
   Eye,
@@ -122,6 +123,22 @@ type ScheduleFormState = {
   roomId: string;
   note: string;
   assignments: Record<string, string>;
+};
+
+type DmMonthlySummary = {
+  id: number;
+  name: string;
+  isActive: boolean;
+  total: number;
+  details: Array<{
+    scheduleId: number;
+    scriptName: string;
+    roomName: string;
+    startAt: string;
+    endAt: string;
+    businessDate: string;
+    roleName: string;
+  }>;
 };
 
 type ScriptFormState = {
@@ -359,9 +376,11 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
   const [monthStart, setMonthStart] = useState(() => startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => toDateOnly(new Date()));
   const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [dmSummary, setDmSummary] = useState<DmMonthlySummary[]>([]);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
   const [creatingDate, setCreatingDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
 
   const monthLabel = `${monthStart.getFullYear()}年${monthStart.getMonth() + 1}月`;
@@ -372,8 +391,12 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
   const selectedSchedules = schedulesByDate.get(selectedDate) ?? [];
 
   useEffect(() => {
-    loadSchedules();
-  }, [monthFrom, monthTo, token]);
+    loadMonthData();
+  }, [monthFrom, monthTo, token, canManage]);
+
+  async function loadMonthData() {
+    await Promise.all([loadSchedules(), canManage ? loadDmSummary() : Promise.resolve()]);
+  }
 
   async function loadSchedules() {
     setLoading(true);
@@ -389,6 +412,35 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
       setError(caughtError instanceof Error ? caughtError.message : "排班加载失败");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadDmSummary() {
+    try {
+      const result = await apiFetch<DmMonthlySummary[]>(
+        `/api/admin/reports/dm-summary?from=${monthFrom}&to=${monthTo}`,
+        { token },
+      );
+      setDmSummary(result);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "DM 统计加载失败");
+    }
+  }
+
+  async function exportMonthlyExcel() {
+    setExporting(true);
+    setError("");
+
+    try {
+      await downloadFile({
+        token,
+        url: `/api/admin/reports/monthly.xlsx?from=${monthFrom}&to=${monthTo}`,
+        filename: `剧本杀排班-${monthFrom.slice(0, 7)}.xlsx`,
+      });
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "导出失败");
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -416,7 +468,7 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
         token,
         method: "DELETE",
       });
-      await loadSchedules();
+      await loadMonthData();
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "删除失败");
     }
@@ -440,6 +492,17 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
               新增
             </button>
           ) : null}
+          {canManage ? (
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={exportMonthlyExcel}
+              disabled={exporting}
+            >
+              <Download size={16} />
+              {exporting ? "导出中" : "导出 Excel"}
+            </button>
+          ) : null}
           <button
             className="icon-button"
             type="button"
@@ -461,7 +524,7 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
           >
             <ChevronRight size={18} />
           </button>
-          <button className="ghost-button" type="button" onClick={loadSchedules} disabled={loading}>
+          <button className="ghost-button" type="button" onClick={loadMonthData} disabled={loading}>
             <RefreshCcw size={16} />
             刷新
           </button>
@@ -547,11 +610,54 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
           onSaved={async () => {
             setCreatingDate(null);
             setEditingSchedule(null);
-            await loadSchedules();
+            await loadMonthData();
           }}
         />
       ) : null}
+      {canManage ? <DmSummaryPanel items={dmSummary} monthLabel={monthLabel} /> : null}
     </article>
+  );
+}
+
+function DmSummaryPanel({ items, monthLabel }: { items: DmMonthlySummary[]; monthLabel: string }) {
+  const activeItems = items.filter((item) => item.total > 0 || item.isActive);
+
+  return (
+    <section className="dm-summary-panel">
+      <div className="day-detail-head">
+        <h3>DM 月统计</h3>
+        <span>{monthLabel}</span>
+      </div>
+      {activeItems.length ? (
+        <div className="dm-summary-list">
+          {activeItems.map((item) => (
+            <article className="dm-summary-card" key={item.id}>
+              <div>
+                <strong>{item.name}</strong>
+                <span>{item.isActive ? "在职" : "停用"}</span>
+              </div>
+              <b>{item.total} 车</b>
+              {item.details.length ? (
+                <p>
+                  {item.details
+                    .slice(0, 4)
+                    .map(
+                      (detail) =>
+                        `${detail.startAt.slice(5, 10)} ${formatTime(detail.startAt)} ${detail.scriptName}`,
+                    )
+                    .join("；")}
+                  {item.details.length > 4 ? `；另 ${item.details.length - 4} 场` : ""}
+                </p>
+              ) : (
+                <p>本月暂无排班</p>
+              )}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="empty-list">暂无 DM 统计</p>
+      )}
+    </section>
   );
 }
 
@@ -1529,6 +1635,37 @@ async function apiFetch<T>(
   }
 
   return result;
+}
+
+async function downloadFile({
+  filename,
+  token,
+  url,
+}: {
+  filename: string;
+  token: string;
+  url: string;
+}) {
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result.message ?? "下载失败");
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 function splitTextList(value: string) {

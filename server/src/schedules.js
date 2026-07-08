@@ -1,3 +1,5 @@
+import ExcelJS from "exceljs";
+
 const halfHourPattern = /^([01]\d|2[0-3]):(00|30)$/;
 
 export function createScheduleHandlers(database) {
@@ -72,6 +74,37 @@ export function createScheduleHandlers(database) {
 
       try {
         response.json(getAvailability(database, payload.value, parseId(request.body?.excludeId)));
+      } catch (error) {
+        handleScheduleError(error, response);
+      }
+    },
+
+    async exportMonthlyExcel(request, response) {
+      try {
+        const { from, to } = parseDateRange(request.query);
+        const schedules = getSchedules(database, request.query);
+        const workbook = buildMonthlyWorkbook(schedules, from, to);
+        const filename = `schedule-${from.slice(0, 7)}.xlsx`;
+
+        response.setHeader(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        );
+        response.setHeader(
+          "Content-Disposition",
+          `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        );
+
+        await workbook.xlsx.write(response);
+        response.end();
+      } catch (error) {
+        handleScheduleError(error, response);
+      }
+    },
+
+    getDmSummary(request, response) {
+      try {
+        response.json(getDmMonthlySummary(database, request.query));
       } catch (error) {
         handleScheduleError(error, response);
       }
@@ -548,6 +581,176 @@ function getScheduleById(database, id) {
     ...schedule,
     roles,
   };
+}
+
+function getDmMonthlySummary(database, query) {
+  const { from, to } = parseDateRange(query);
+  const dms = database
+    .prepare(
+      `
+      SELECT id, name, is_active AS isActive
+      FROM dms
+      ORDER BY is_active DESC, name ASC
+      `,
+    )
+    .all();
+
+  const rows = database
+    .prepare(
+      `
+      SELECT
+        dms.id AS dmId,
+        dms.name AS dmName,
+        schedules.id AS scheduleId,
+        scripts.name AS scriptName,
+        rooms.name AS roomName,
+        schedules.start_at AS startAt,
+        schedules.end_at AS endAt,
+        schedules.business_date AS businessDate,
+        schedule_roles.role_name AS roleName
+      FROM schedule_roles
+      JOIN dms ON dms.id = schedule_roles.dm_id
+      JOIN schedules ON schedules.id = schedule_roles.schedule_id
+      JOIN scripts ON scripts.id = schedules.script_id
+      JOIN rooms ON rooms.id = schedules.room_id
+      WHERE schedules.start_at >= ?
+        AND schedules.start_at < ?
+      ORDER BY dms.name ASC, schedules.start_at ASC
+      `,
+    )
+    .all(from, to);
+
+  return dms.map((dm) => {
+    const details = rows
+      .filter((row) => row.dmId === dm.id)
+      .map((row) => ({
+        scheduleId: row.scheduleId,
+        scriptName: row.scriptName,
+        roomName: row.roomName,
+        startAt: row.startAt,
+        endAt: row.endAt,
+        businessDate: row.businessDate,
+        roleName: row.roleName,
+      }));
+
+    return {
+      id: dm.id,
+      name: dm.name,
+      isActive: Boolean(dm.isActive),
+      total: details.length,
+      details,
+    };
+  });
+}
+
+function buildMonthlyWorkbook(schedules, from, to) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "剧本杀排班系统";
+  workbook.created = new Date();
+
+  const scheduleSheet = workbook.addWorksheet("月度排班");
+  scheduleSheet.columns = [
+    { header: "日期", key: "date", width: 14 },
+    { header: "开始时间", key: "startTime", width: 12 },
+    { header: "结束时间", key: "endTime", width: 12 },
+    { header: "剧本", key: "scriptName", width: 24 },
+    { header: "房间", key: "roomName", width: 16 },
+    { header: "角色-DM", key: "roles", width: 42 },
+    { header: "备注", key: "note", width: 32 },
+  ];
+
+  for (const schedule of schedules) {
+    scheduleSheet.addRow({
+      date: schedule.startAt.slice(0, 10),
+      startTime: formatTime(schedule.startAt),
+      endTime: formatTime(schedule.endAt),
+      scriptName: schedule.scriptName,
+      roomName: schedule.roomName,
+      roles: schedule.roles.map((role) => `${role.roleName}-${role.dmName}`).join("；"),
+      note: schedule.note,
+    });
+  }
+
+  const summarySheet = workbook.addWorksheet("DM月统计");
+  summarySheet.columns = [
+    { header: "DM", key: "dmName", width: 18 },
+    { header: "总排班数", key: "total", width: 12 },
+    { header: "排班明细", key: "details", width: 80 },
+  ];
+
+  const summary = summarizeDmFromSchedules(schedules);
+  for (const item of summary) {
+    summarySheet.addRow({
+      dmName: item.dmName,
+      total: item.total,
+      details: item.details
+        .map(
+          (detail) =>
+            `${detail.startAt.slice(0, 10)} ${formatTime(detail.startAt)} ${detail.scriptName} ${detail.roleName}`,
+        )
+        .join("；"),
+    });
+  }
+
+  styleWorksheet(scheduleSheet, `月度排班 ${from.slice(0, 10)} 至 ${to.slice(0, 10)}`);
+  styleWorksheet(summarySheet, `DM月统计 ${from.slice(0, 7)}`);
+
+  return workbook;
+}
+
+function summarizeDmFromSchedules(schedules) {
+  const map = new Map();
+
+  for (const schedule of schedules) {
+    for (const role of schedule.roles) {
+      if (!map.has(role.dmId)) {
+        map.set(role.dmId, {
+          dmId: role.dmId,
+          dmName: role.dmName,
+          total: 0,
+          details: [],
+        });
+      }
+
+      const item = map.get(role.dmId);
+      item.total += 1;
+      item.details.push({
+        scheduleId: schedule.id,
+        scriptName: schedule.scriptName,
+        startAt: schedule.startAt,
+        roleName: role.roleName,
+      });
+    }
+  }
+
+  return Array.from(map.values()).sort((left, right) => {
+    if (right.total !== left.total) {
+      return right.total - left.total;
+    }
+
+    return left.dmName.localeCompare(right.dmName, "zh-CN");
+  });
+}
+
+function styleWorksheet(worksheet, title) {
+  worksheet.insertRow(1, [title]);
+  worksheet.mergeCells(1, 1, 1, worksheet.columnCount);
+
+  const titleCell = worksheet.getCell(1, 1);
+  titleCell.font = { bold: true, size: 16 };
+  titleCell.alignment = { vertical: "middle", horizontal: "center" };
+
+  const headerRow = worksheet.getRow(2);
+  headerRow.font = { bold: true };
+  headerRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFE9F3F2" },
+  };
+
+  worksheet.eachRow((row) => {
+    row.alignment = { vertical: "middle", wrapText: true };
+  });
 }
 
 function parseSchedulePayload(body, options = { requireAssignments: true }) {

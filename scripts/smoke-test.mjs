@@ -284,6 +284,21 @@ async function main() {
     "查看权限没有读取到排班",
   );
 
+  const dmSummary = await request("/api/admin/reports/dm-summary?from=2026-07-01&to=2026-08-01", {
+    headers: adminHeaders,
+  });
+  const dm1Summary = dmSummary.find((item) => item.id === dm1.id);
+  const dm2Summary = dmSummary.find((item) => item.id === dm2.id);
+  assert(dm1Summary?.total === 1, "DM 月统计没有统计到侦探 DM");
+  assert(dm2Summary?.total === 1, "DM 月统计没有统计到凶手 DM");
+
+  const excel = await request("/api/admin/reports/monthly.xlsx?from=2026-07-01&to=2026-08-01", {
+    headers: adminHeaders,
+    responseType: "buffer",
+  });
+  assert(excel.contentType.includes("spreadsheetml"), "Excel 导出响应类型错误");
+  assert(excel.buffer.subarray(0, 2).toString("utf8") === "PK", "Excel 导出文件格式错误");
+
   await expectHttpError(
     `/api/admin/schedules/${firstSchedule.id}`,
     {
@@ -319,6 +334,8 @@ async function main() {
           "duplicate role conflict",
           "viewer read",
           "viewer forbidden write",
+          "dm monthly summary",
+          "monthly excel export",
         ],
       },
       null,
@@ -336,6 +353,21 @@ async function request(path, options = {}) {
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+  if (options.responseType === "buffer") {
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    if (!response.ok) {
+      const error = new Error("请求失败");
+      error.status = response.status;
+      throw error;
+    }
+
+    return {
+      buffer,
+      contentType: response.headers.get("content-type") ?? "",
+    };
+  }
+
   const text = await response.text();
   const body = text ? JSON.parse(text) : null;
 

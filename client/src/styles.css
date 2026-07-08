@@ -482,6 +482,58 @@ h2 {
   line-height: 1.6;
 }
 
+.dm-summary-panel {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #e4e9f0;
+  padding-top: 16px;
+}
+
+.dm-summary-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.dm-summary-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d9e0ea;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.dm-summary-card div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dm-summary-card strong {
+  color: #1d2330;
+  overflow-wrap: anywhere;
+}
+
+.dm-summary-card span {
+  flex: 0 0 auto;
+  color: #6b7785;
+  font-size: 12px;
+}
+
+.dm-summary-card b {
+  color: #2f6f73;
+  font-size: 24px;
+}
+
+.dm-summary-card p {
+  margin-bottom: 0;
+  color: #6b7785;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

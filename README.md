@@ -123,6 +123,20 @@ PUT /api/admin/schedules/:id
 DELETE /api/admin/schedules/:id
 ```
 
+## 报表接口
+
+以下接口需要管理权限：
+
+```bash
+GET /api/admin/reports/monthly.xlsx?from=2026-07-01&to=2026-08-01
+GET /api/admin/reports/dm-summary?from=2026-07-01&to=2026-08-01
+```
+
+页面上支持：
+
+- 导出当前月份排班为 Excel 文件
+- 查询当前月份每个 DM 的总排班数和排班明细
+
 创建/编辑排班请求体：
 
 ```json
