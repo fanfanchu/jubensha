@@ -135,6 +135,12 @@ type ScheduleFormState = {
   assignments: Record<string, string>;
 };
 
+type ScheduleChange = {
+  label: string;
+  before: string;
+  after: string;
+};
+
 type DmMonthlySummary = {
   id: number;
   name: string;
@@ -926,6 +932,7 @@ function ScheduleModal({
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pendingChanges, setPendingChanges] = useState<ScheduleChange[] | null>(null);
   const [error, setError] = useState("");
 
   const selectedScript = scripts.find((script) => String(script.id) === form.scriptId);
@@ -1057,16 +1064,18 @@ function ScheduleModal({
     setError("");
 
     if (schedule) {
-      const changeLines = getScheduleChangeLines(schedule, form, scripts, rooms, dms);
+      const changes = getScheduleChanges(schedule, form, scripts, rooms, dms);
 
-      if (
-        changeLines.length > 0 &&
-        !window.confirm(`本次修改了以下关键内容：\n\n${changeLines.join("\n")}\n\n确认保存吗？`)
-      ) {
+      if (changes.length > 0) {
+        setPendingChanges(changes);
         return;
       }
     }
 
+    await saveSchedule();
+  }
+
+  async function saveSchedule() {
     setSaving(true);
 
     try {
@@ -1080,6 +1089,7 @@ function ScheduleModal({
       setError(caughtError instanceof Error ? caughtError.message : "保存排班失败");
     } finally {
       setSaving(false);
+      setPendingChanges(null);
     }
   }
 
@@ -1300,6 +1310,66 @@ function ScheduleModal({
             </button>
           </div>
         </form>
+      </section>
+      {pendingChanges ? (
+        <ChangeConfirmDialog
+          changes={pendingChanges}
+          saving={saving}
+          onCancel={() => setPendingChanges(null)}
+          onConfirm={saveSchedule}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ChangeConfirmDialog({
+  changes,
+  onCancel,
+  onConfirm,
+  saving,
+}: {
+  changes: ScheduleChange[];
+  onCancel: () => void;
+  onConfirm: () => void;
+  saving: boolean;
+}) {
+  return (
+    <div className="confirm-backdrop" role="presentation">
+      <section className="confirm-panel" role="dialog" aria-modal="true" aria-label="确认保存修改">
+        <div className="confirm-head">
+          <div className="brand-mark small-brand-mark" aria-hidden="true">
+            <AlertTriangle size={20} />
+          </div>
+          <div>
+            <p className="eyebrow">保存前确认</p>
+            <h2>本次修改了 {changes.length} 项关键内容</h2>
+          </div>
+        </div>
+        <div className="change-list">
+          {changes.map((change) => (
+            <article className="change-item" key={change.label}>
+              <strong>{change.label}</strong>
+              <div>
+                <span>原来</span>
+                <p>{change.before || "无"}</p>
+              </div>
+              <div>
+                <span>改为</span>
+                <p>{change.after || "无"}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="ghost-button" type="button" onClick={onCancel} disabled={saving}>
+            返回检查
+          </button>
+          <button className="primary-button" type="button" onClick={onConfirm} disabled={saving}>
+            <Save size={16} />
+            {saving ? "保存中" : "确认保存"}
+          </button>
+        </div>
       </section>
     </div>
   );
@@ -1936,48 +2006,85 @@ function buildSchedulePayload(form: ScheduleFormState, excludeId?: number) {
   };
 }
 
-function getScheduleChangeLines(
+function getScheduleChanges(
   schedule: Schedule,
   form: ScheduleFormState,
   scripts: Script[],
   rooms: Room[],
   dms: Dm[],
 ) {
-  const changes: string[] = [];
+  const changes: ScheduleChange[] = [];
   const nextScriptName =
     scripts.find((script) => String(script.id) === form.scriptId)?.name ?? "未选择剧本";
   const nextRoomName =
     rooms.find((room) => String(room.id) === form.roomId)?.name ?? "未选择房间";
   const nextTime = `${form.date} ${form.startTime}`;
   const currentTime = `${schedule.startAt.slice(0, 10)} ${formatTime(schedule.startAt)}`;
-  const currentRoles = formatRoleText(schedule.roles);
-  const nextRoles = formatFormRoleText(form.assignments, dms);
 
   if (schedule.scriptName !== nextScriptName) {
-    changes.push(`剧本：${schedule.scriptName} -> ${nextScriptName}`);
+    changes.push({
+      label: "剧本",
+      before: schedule.scriptName,
+      after: nextScriptName,
+    });
   }
 
   if (currentTime !== nextTime) {
-    changes.push(`开场时间：${currentTime} -> ${nextTime}`);
+    changes.push({
+      label: "开场时间",
+      before: currentTime,
+      after: nextTime,
+    });
   }
 
   if (schedule.roomName !== nextRoomName) {
-    changes.push(`房间：${schedule.roomName} -> ${nextRoomName}`);
+    changes.push({
+      label: "房间",
+      before: schedule.roomName,
+      after: nextRoomName,
+    });
   }
 
   if (schedule.playersReady !== form.playersReady) {
-    changes.push(
-      `玩家是否摇齐：${formatPlayersReady(schedule.playersReady)} -> ${formatPlayersReady(
-        form.playersReady,
-      )}`,
-    );
+    changes.push({
+      label: "玩家状态",
+      before: formatPlayersReady(schedule.playersReady),
+      after: formatPlayersReady(form.playersReady),
+    });
   }
 
-  if (currentRoles !== nextRoles) {
-    changes.push(`角色 DM：${currentRoles || "无"} -> ${nextRoles || "无"}`);
+  for (const change of getRoleChanges(schedule.roles, form.assignments, dms)) {
+    changes.push(change);
   }
 
   return changes;
+}
+
+function getRoleChanges(
+  roles: ScheduleRole[],
+  assignments: Record<string, string>,
+  dms: Dm[],
+) {
+  const oldRoles = new Map(roles.map((role) => [role.roleName, role.dmName]));
+  const roleNames = Array.from(new Set([...oldRoles.keys(), ...Object.keys(assignments)]));
+
+  return roleNames
+    .map((roleName) => {
+      const nextValue = assignments[roleName] ?? "";
+      const before = oldRoles.get(roleName) ?? "无";
+      const after = formatAssignmentDmName(nextValue, dms);
+
+      if (before === after) {
+        return null;
+      }
+
+      return {
+        label: `角色 DM：${roleName}`,
+        before,
+        after,
+      };
+    })
+    .filter((item): item is ScheduleChange => Boolean(item));
 }
 
 function copyScheduleText(schedule: Schedule) {
@@ -2030,14 +2137,21 @@ function formatFormRoleText(assignments: Record<string, string>, dms: Dm[]) {
   return Object.entries(assignments)
     .filter(([_roleName, value]) => value)
     .map(([roleName, value]) => {
-      const dmName =
-        value === pendingDmValue
-          ? "DM 待定"
-          : dms.find((dm) => String(dm.id) === value)?.name ?? "未知 DM";
-
-      return `${roleName}：${dmName}`;
+      return `${roleName}：${formatAssignmentDmName(value, dms)}`;
     })
     .join("；");
+}
+
+function formatAssignmentDmName(value: string, dms: Dm[]) {
+  if (!value) {
+    return "未选择";
+  }
+
+  if (value === pendingDmValue) {
+    return "DM 待定";
+  }
+
+  return dms.find((dm) => String(dm.id) === value)?.name ?? "未知 DM";
 }
 
 function formatPlayersReady(value: boolean) {

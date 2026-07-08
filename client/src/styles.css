@@ -155,6 +155,11 @@ select {
   background: var(--primary);
 }
 
+.small-brand-mark {
+  width: 42px;
+  height: 42px;
+}
+
 .session-actions {
   gap: 10px;
 }
@@ -743,6 +748,16 @@ h2 {
   background: var(--modal-overlay);
 }
 
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 6, 23, 0.36);
+}
+
 .modal-panel {
   display: grid;
   gap: 18px;
@@ -756,17 +771,80 @@ h2 {
   box-shadow: 0 24px 70px var(--modal-shadow);
 }
 
+.confirm-panel {
+  display: grid;
+  gap: 16px;
+  width: min(620px, 100%);
+  max-height: min(88vh, 760px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 22px;
+  background: var(--panel);
+  box-shadow: 0 24px 70px var(--modal-shadow);
+}
+
 .modal-head,
 .modal-actions,
-.assignment-head {
+.assignment-head,
+.confirm-head {
   display: flex;
   gap: 12px;
   align-items: center;
   justify-content: space-between;
 }
 
-.modal-head h2 {
+.confirm-head {
+  justify-content: flex-start;
+}
+
+.modal-head h2,
+.confirm-head h2 {
   margin-bottom: 0;
+}
+
+.change-list {
+  display: grid;
+  gap: 10px;
+}
+
+.change-item {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel-softer);
+}
+
+.change-item strong {
+  display: flex;
+  align-items: center;
+  color: var(--heading);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.change-item div {
+  display: grid;
+  gap: 5px;
+  border-radius: 8px;
+  padding: 9px;
+  background: var(--panel);
+}
+
+.change-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.change-item p {
+  margin-bottom: 0;
+  color: var(--text);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .schedule-form {
@@ -1215,14 +1293,29 @@ h2 {
     padding: 12px;
   }
 
-  .modal-panel {
+  .modal-panel,
+  .confirm-panel {
     max-height: calc(100vh - 24px);
     padding: 18px;
   }
 
+  .confirm-backdrop {
+    align-items: start;
+    padding: 12px;
+  }
+
   .modal-head,
-  .modal-actions {
+  .modal-actions,
+  .confirm-head {
     align-items: stretch;
+  }
+
+  .confirm-head {
+    align-items: flex-start;
+  }
+
+  .change-item {
+    grid-template-columns: 1fr;
   }
 
   .modal-actions {
