@@ -3,9 +3,11 @@ import { createRoot } from "react-dom/client";
 import {
   AlertTriangle,
   CalendarDays,
+  Check,
   ChevronLeft,
   ChevronRight,
   Clock,
+  Copy,
   Download,
   DoorOpen,
   Edit3,
@@ -816,12 +818,33 @@ function ScheduleCard({
   onEdit: () => void;
   schedule: Schedule;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copySchedule() {
+    try {
+      await copyText(copyScheduleText(schedule));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      window.alert("复制失败，请稍后重试");
+    }
+  }
+
   return (
     <article className="schedule-card">
       <div className="schedule-card-head">
         <strong>{schedule.scriptName}</strong>
         <div className="schedule-card-actions">
           <span>{schedule.businessDate}</span>
+          <button
+            className="icon-button small-icon-button"
+            type="button"
+            title={copied ? "已复制" : "复制排班信息"}
+            aria-label={copied ? "已复制" : "复制排班信息"}
+            onClick={copySchedule}
+          >
+            {copied ? <Check size={15} /> : <Copy size={15} />}
+          </button>
           {canManage ? (
             <>
               <button
@@ -1031,8 +1054,20 @@ function ScheduleModal({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSaving(true);
     setError("");
+
+    if (schedule) {
+      const changeLines = getScheduleChangeLines(schedule, form, scripts, rooms, dms);
+
+      if (
+        changeLines.length > 0 &&
+        !window.confirm(`本次修改了以下关键内容：\n\n${changeLines.join("\n")}\n\n确认保存吗？`)
+      ) {
+        return;
+      }
+    }
+
+    setSaving(true);
 
     try {
       await apiFetch<Schedule>(`/api/admin/schedules${form.id ? `/${form.id}` : ""}`, {
@@ -1899,6 +1934,114 @@ function buildSchedulePayload(form: ScheduleFormState, excludeId?: number) {
         dmId: dmId === pendingDmValue ? null : Number(dmId),
       })),
   };
+}
+
+function getScheduleChangeLines(
+  schedule: Schedule,
+  form: ScheduleFormState,
+  scripts: Script[],
+  rooms: Room[],
+  dms: Dm[],
+) {
+  const changes: string[] = [];
+  const nextScriptName =
+    scripts.find((script) => String(script.id) === form.scriptId)?.name ?? "未选择剧本";
+  const nextRoomName =
+    rooms.find((room) => String(room.id) === form.roomId)?.name ?? "未选择房间";
+  const nextTime = `${form.date} ${form.startTime}`;
+  const currentTime = `${schedule.startAt.slice(0, 10)} ${formatTime(schedule.startAt)}`;
+  const currentRoles = formatRoleText(schedule.roles);
+  const nextRoles = formatFormRoleText(form.assignments, dms);
+
+  if (schedule.scriptName !== nextScriptName) {
+    changes.push(`剧本：${schedule.scriptName} -> ${nextScriptName}`);
+  }
+
+  if (currentTime !== nextTime) {
+    changes.push(`开场时间：${currentTime} -> ${nextTime}`);
+  }
+
+  if (schedule.roomName !== nextRoomName) {
+    changes.push(`房间：${schedule.roomName} -> ${nextRoomName}`);
+  }
+
+  if (schedule.playersReady !== form.playersReady) {
+    changes.push(
+      `玩家是否摇齐：${formatPlayersReady(schedule.playersReady)} -> ${formatPlayersReady(
+        form.playersReady,
+      )}`,
+    );
+  }
+
+  if (currentRoles !== nextRoles) {
+    changes.push(`角色 DM：${currentRoles || "无"} -> ${nextRoles || "无"}`);
+  }
+
+  return changes;
+}
+
+function copyScheduleText(schedule: Schedule) {
+  const lines = [
+    `${schedule.startAt.slice(5, 10)} ${formatTime(schedule.startAt)}-${formatTime(
+      schedule.endAt,
+    )}`,
+    `《${schedule.scriptName}》`,
+    `房间：${schedule.roomName}`,
+    `DM：${formatRoleText(schedule.roles) || "无"}`,
+    `玩家：${formatPlayersReady(schedule.playersReady)}`,
+  ];
+
+  if (schedule.note) {
+    lines.push(`备注：${schedule.note}`);
+  }
+
+  return lines.join("\n");
+}
+
+async function copyText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+
+  if (!copied) {
+    throw new Error("复制失败");
+  }
+}
+
+function formatRoleText(roles: Array<Pick<ScheduleRole, "roleName" | "dmName" | "sortOrder">>) {
+  return [...roles]
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((role) => `${role.roleName}：${role.dmName}`)
+    .join("；");
+}
+
+function formatFormRoleText(assignments: Record<string, string>, dms: Dm[]) {
+  return Object.entries(assignments)
+    .filter(([_roleName, value]) => value)
+    .map(([roleName, value]) => {
+      const dmName =
+        value === pendingDmValue
+          ? "DM 待定"
+          : dms.find((dm) => String(dm.id) === value)?.name ?? "未知 DM";
+
+      return `${roleName}：${dmName}`;
+    })
+    .join("；");
+}
+
+function formatPlayersReady(value: boolean) {
+  return value ? "已摇齐" : "未摇齐";
 }
 
 function getHalfHourOptions() {
