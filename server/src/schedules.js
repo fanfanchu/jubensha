@@ -129,6 +129,7 @@ function saveSchedule(database, payload, id = null) {
             end_at = ?,
             room_available_at = ?,
             business_date = ?,
+            players_ready = ?,
             note = ?,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
@@ -141,6 +142,7 @@ function saveSchedule(database, payload, id = null) {
           prepared.endAt,
           prepared.roomAvailableAt,
           prepared.businessDate,
+          prepared.playersReady ? 1 : 0,
           prepared.note,
           id,
         );
@@ -157,9 +159,10 @@ function saveSchedule(database, payload, id = null) {
             end_at,
             room_available_at,
             business_date,
+            players_ready,
             note
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
@@ -169,6 +172,7 @@ function saveSchedule(database, payload, id = null) {
           prepared.endAt,
           prepared.roomAvailableAt,
           prepared.businessDate,
+          prepared.playersReady ? 1 : 0,
           prepared.note,
         );
 
@@ -193,7 +197,11 @@ function saveSchedule(database, payload, id = null) {
 function getAvailability(database, payload, excludeId = null) {
   const prepared = prepareSchedule(database, payload, excludeId);
   const conflicts = collectConflicts(database, prepared, excludeId);
-  const assignedDmIds = new Set(prepared.assignments.map((assignment) => assignment.dmId));
+  const assignedDmIds = new Set(
+    prepared.assignments
+      .map((assignment) => assignment.dmId)
+      .filter((dmId) => dmId !== null),
+  );
 
   const rooms = database
     .prepare(
@@ -241,6 +249,7 @@ function getAvailability(database, payload, excludeId = null) {
     endAt: prepared.endAt,
     roomAvailableAt: prepared.roomAvailableAt,
     businessDate: prepared.businessDate,
+    playersReady: prepared.playersReady,
     conflicts,
     rooms,
     dms,
@@ -311,6 +320,10 @@ function collectConflicts(database, prepared, excludeId) {
       continue;
     }
     assignedRoleNames.add(assignment.roleName);
+
+    if (assignment.dmId === null) {
+      continue;
+    }
 
     const dm = prepared.dmsById.get(assignment.dmId);
 
@@ -469,6 +482,7 @@ function prepareSchedule(database, payload) {
     endAt: toLocalIso(endDate),
     roomAvailableAt: toLocalIso(addMinutes(endDate, cleaningMinutes)),
     businessDate: getBusinessDate(startDate, businessDayStartHour),
+    playersReady: payload.playersReady,
     note: payload.note,
     assignments: payload.assignments,
   };
@@ -489,6 +503,7 @@ function getSchedules(database, query) {
         schedules.end_at AS endAt,
         schedules.room_available_at AS roomAvailableAt,
         schedules.business_date AS businessDate,
+        schedules.players_ready AS playersReady,
         schedules.note,
         schedules.created_at AS createdAt,
         schedules.updated_at AS updatedAt
@@ -517,17 +532,14 @@ function getSchedules(database, query) {
         dms.name AS dmName,
         schedule_roles.sort_order AS sortOrder
       FROM schedule_roles
-      JOIN dms ON dms.id = schedule_roles.dm_id
+      LEFT JOIN dms ON dms.id = schedule_roles.dm_id
       WHERE schedule_roles.schedule_id IN (${rows.map(() => "?").join(",")})
       ORDER BY schedule_roles.schedule_id ASC, schedule_roles.sort_order ASC
       `,
     )
     .all(...rows.map((row) => row.id));
 
-  return rows.map((row) => ({
-    ...row,
-    roles: roles.filter((role) => role.scheduleId === row.id),
-  }));
+  return rows.map((row) => formatSchedule(row, roles.filter((role) => role.scheduleId === row.id)));
 }
 
 function getScheduleById(database, id) {
@@ -544,6 +556,7 @@ function getScheduleById(database, id) {
         schedules.end_at AS endAt,
         schedules.room_available_at AS roomAvailableAt,
         schedules.business_date AS businessDate,
+        schedules.players_ready AS playersReady,
         schedules.note,
         schedules.created_at AS createdAt,
         schedules.updated_at AS updatedAt
@@ -570,16 +583,25 @@ function getScheduleById(database, id) {
         dms.name AS dmName,
         schedule_roles.sort_order AS sortOrder
       FROM schedule_roles
-      JOIN dms ON dms.id = schedule_roles.dm_id
+      LEFT JOIN dms ON dms.id = schedule_roles.dm_id
       WHERE schedule_roles.schedule_id = ?
       ORDER BY schedule_roles.sort_order ASC
       `,
     )
     .all(id);
 
+  return formatSchedule(schedule, roles);
+}
+
+function formatSchedule(schedule, roles) {
   return {
     ...schedule,
-    roles,
+    playersReady: Boolean(schedule.playersReady),
+    roles: roles.map((role) => ({
+      ...role,
+      dmId: role.dmId ?? null,
+      dmName: role.dmName ?? "DM 待定",
+    })),
   };
 }
 
@@ -655,6 +677,7 @@ function buildMonthlyWorkbook(schedules, from, to) {
     { header: "结束时间", key: "endTime", width: 12 },
     { header: "剧本", key: "scriptName", width: 24 },
     { header: "房间", key: "roomName", width: 16 },
+    { header: "玩家是否摇齐", key: "playersReady", width: 16 },
     { header: "角色-DM", key: "roles", width: 42 },
     { header: "备注", key: "note", width: 32 },
   ];
@@ -666,6 +689,7 @@ function buildMonthlyWorkbook(schedules, from, to) {
       endTime: formatTime(schedule.endAt),
       scriptName: schedule.scriptName,
       roomName: schedule.roomName,
+      playersReady: schedule.playersReady ? "是" : "否",
       roles: schedule.roles.map((role) => `${role.roleName}-${role.dmName}`).join("；"),
       note: schedule.note,
     });
@@ -703,6 +727,10 @@ function summarizeDmFromSchedules(schedules) {
 
   for (const schedule of schedules) {
     for (const role of schedule.roles) {
+      if (role.dmId === null) {
+        continue;
+      }
+
       if (!map.has(role.dmId)) {
         map.set(role.dmId, {
           dmId: role.dmId,
@@ -759,6 +787,7 @@ function parseSchedulePayload(body, options = { requireAssignments: true }) {
   const date = normalizeText(body?.date);
   const startTime = normalizeText(body?.startTime);
   const assignments = normalizeAssignments(body?.assignments);
+  const playersReady = parseBoolean(body?.playersReady, true);
 
   if (!scriptId) {
     return { error: validationError("请选择剧本") };
@@ -786,6 +815,7 @@ function parseSchedulePayload(body, options = { requireAssignments: true }) {
       roomId,
       date,
       startTime,
+      playersReady,
       note: normalizeText(body?.note),
       assignments,
     },
@@ -798,11 +828,20 @@ function normalizeAssignments(value) {
   }
 
   return value
-    .map((assignment) => ({
-      roleName: normalizeText(assignment?.roleName),
-      dmId: parseId(assignment?.dmId),
-    }))
-    .filter((assignment) => assignment.roleName && assignment.dmId);
+    .map((assignment) => {
+      const roleName = normalizeText(assignment?.roleName);
+      const rawDmId = assignment?.dmId;
+      const isPending = rawDmId === null || rawDmId === "pending";
+      const parsedDmId = parseId(rawDmId);
+
+      return {
+        roleName,
+        dmId: isPending ? null : parsedDmId,
+        selected: isPending || Boolean(parsedDmId),
+      };
+    })
+    .filter((assignment) => assignment.roleName && assignment.selected)
+    .map(({ roleName, dmId }) => ({ roleName, dmId }));
 }
 
 function parseDateRange(query) {
@@ -982,6 +1021,22 @@ function normalizeText(value) {
 function parseId(value) {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function parseBoolean(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (value === 1 || value === "1" || value === "true") {
+    return true;
+  }
+
+  if (value === 0 || value === "0" || value === "false") {
+    return false;
+  }
+
+  return fallback;
 }
 
 function recordExists(database, table, id) {

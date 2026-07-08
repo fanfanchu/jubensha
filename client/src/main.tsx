@@ -1,6 +1,7 @@
 import { FormEvent, StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  AlertTriangle,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -12,18 +13,22 @@ import {
   KeyRound,
   LogOut,
   MapPin,
+  Moon,
   Plus,
   RefreshCcw,
   Save,
   Settings,
   ShieldCheck,
+  Sun,
   Trash2,
+  UsersRound,
   X,
 } from "lucide-react";
 import "./styles.css";
 
 type Role = "admin" | "viewer";
 type ConfigTab = "scripts" | "dms" | "rooms";
+type Theme = "light" | "dark";
 
 type Session = {
   role: Role;
@@ -69,7 +74,7 @@ type ScheduleRole = {
   id: number;
   scheduleId: number;
   roleName: string;
-  dmId: number;
+  dmId: number | null;
   dmName: string;
   sortOrder: number;
 };
@@ -84,6 +89,7 @@ type Schedule = {
   endAt: string;
   roomAvailableAt: string;
   businessDate: string;
+  playersReady: boolean;
   note: string;
   roles: ScheduleRole[];
 };
@@ -110,6 +116,7 @@ type Availability = {
   endAt: string;
   roomAvailableAt: string;
   businessDate: string;
+  playersReady: boolean;
   conflicts: Array<{ code: string; message: string }>;
   rooms: AvailabilityRoom[];
   dms: AvailabilityDm[];
@@ -121,6 +128,7 @@ type ScheduleFormState = {
   scriptId: string;
   startTime: string;
   roomId: string;
+  playersReady: boolean;
   note: string;
   assignments: Record<string, string>;
 };
@@ -164,6 +172,8 @@ type RoomFormState = {
 };
 
 const sessionStorageKey = "scheduler-session";
+const themeStorageKey = "scheduler-theme";
+const pendingDmValue = "pending";
 
 const emptyScriptForm: ScriptFormState = {
   name: "",
@@ -187,6 +197,12 @@ const emptyRoomForm: RoomFormState = {
 function App() {
   const [session, setSession] = useState<Session | null>(() => readStoredSession());
   const [checkingSession, setCheckingSession] = useState(Boolean(session));
+  const [theme, setTheme] = useState<Theme>(() => readStoredTheme());
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(themeStorageKey, theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!session) {
@@ -222,6 +238,9 @@ function App() {
   if (checkingSession) {
     return (
       <main className="app-shell">
+        <div className="auth-actions">
+          <ThemeToggle theme={theme} onToggle={() => setTheme(toggleTheme(theme))} />
+        </div>
         <section className="login-panel">
           <p className="eyebrow">剧本杀排班系统</p>
           <h1>正在进入</h1>
@@ -233,6 +252,9 @@ function App() {
   if (!session) {
     return (
       <main className="app-shell auth-shell">
+        <div className="auth-actions">
+          <ThemeToggle theme={theme} onToggle={() => setTheme(toggleTheme(theme))} />
+        </div>
         <LoginView onLogin={setSession} />
       </main>
     );
@@ -251,6 +273,7 @@ function App() {
           </div>
         </div>
         <div className="session-actions">
+          <ThemeToggle theme={theme} onToggle={() => setTheme(toggleTheme(theme))} />
           <span className="role-badge">
             {session.role === "admin" ? <ShieldCheck size={16} /> : <Eye size={16} />}
             {session.role === "admin" ? "管理权限" : "查看权限"}
@@ -271,6 +294,22 @@ function App() {
       </header>
       <Dashboard session={session} />
     </main>
+  );
+}
+
+function ThemeToggle({ onToggle, theme }: { onToggle: () => void; theme: Theme }) {
+  const isDark = theme === "dark";
+
+  return (
+    <button
+      className="icon-button"
+      type="button"
+      title={isDark ? "切换到日间模式" : "切换到夜间模式"}
+      aria-label={isDark ? "切换到日间模式" : "切换到夜间模式"}
+      onClick={onToggle}
+    >
+      {isDark ? <Sun size={18} /> : <Moon size={18} />}
+    </button>
   );
 }
 
@@ -389,6 +428,14 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
   const calendarDays = useMemo(() => getCalendarDays(monthStart), [monthStart]);
   const schedulesByDate = useMemo(() => groupSchedulesByDate(schedules), [schedules]);
   const selectedSchedules = schedulesByDate.get(selectedDate) ?? [];
+  const pendingDmSchedules = useMemo(
+    () => schedules.filter((schedule) => schedule.roles.some((role) => role.dmId === null)),
+    [schedules],
+  );
+  const playersNotReadySchedules = useMemo(
+    () => schedules.filter((schedule) => !schedule.playersReady),
+    [schedules],
+  );
 
   useEffect(() => {
     loadMonthData();
@@ -535,69 +582,79 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
         <span>{loading ? "加载中" : `${schedules.length} 场`}</span>
       </div>
       {error ? <p className="form-error">{error}</p> : null}
-      <div className="calendar-grid" aria-label={`${monthLabel}排班`}>
-        {["一", "二", "三", "四", "五", "六", "日"].map((weekday) => (
-          <div className="weekday" key={weekday}>
-            {weekday}
-          </div>
-        ))}
-        {calendarDays.map((date) => {
-          const dateKey = toDateOnly(date);
-          const daySchedules = schedulesByDate.get(dateKey) ?? [];
-          const isCurrentMonth = date.getMonth() === monthStart.getMonth();
-          const isSelected = selectedDate === dateKey;
-          const isToday = dateKey === toDateOnly(new Date());
-
-          return (
-            <button
-              className={[
-                "calendar-day",
-                isCurrentMonth ? "" : "muted-day",
-                isSelected ? "selected" : "",
-                isToday ? "today" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              key={dateKey}
-              type="button"
-              onClick={() => setSelectedDate(dateKey)}
-            >
-              <span className="day-number">{date.getDate()}</span>
-              <div className="day-events">
-                {daySchedules.slice(0, 3).map((schedule) => (
-                  <span className="day-event" key={schedule.id}>
-                    {formatTime(schedule.startAt)} {schedule.scriptName}
-                  </span>
-                ))}
-                {daySchedules.length > 3 ? (
-                  <span className="day-more">+{daySchedules.length - 3} 场</span>
-                ) : null}
+      <div className="calendar-content-grid">
+        <div className="calendar-core">
+          <div className="calendar-grid" aria-label={`${monthLabel}排班`}>
+            {["一", "二", "三", "四", "五", "六", "日"].map((weekday) => (
+              <div className="weekday" key={weekday}>
+                {weekday}
               </div>
-            </button>
-          );
-        })}
-      </div>
-      <section className="day-detail">
-        <div className="day-detail-head">
-          <h3>{formatDateLabel(selectedDate)}</h3>
-          <span>{selectedSchedules.length} 场</span>
-        </div>
-        {selectedSchedules.length ? (
-          <div className="schedule-list">
-            {selectedSchedules.map((schedule) => (
-              <ScheduleCard
-                canManage={canManage}
-                key={schedule.id}
-                schedule={schedule}
-                onDelete={() => deleteSchedule(schedule)}
-                onEdit={() => setEditingSchedule(schedule)}
-              />
             ))}
+            {calendarDays.map((date) => {
+              const dateKey = toDateOnly(date);
+              const daySchedules = schedulesByDate.get(dateKey) ?? [];
+              const isCurrentMonth = date.getMonth() === monthStart.getMonth();
+              const isSelected = selectedDate === dateKey;
+              const isToday = dateKey === toDateOnly(new Date());
+
+              return (
+                <button
+                  className={[
+                    "calendar-day",
+                    isCurrentMonth ? "" : "muted-day",
+                    isSelected ? "selected" : "",
+                    isToday ? "today" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={dateKey}
+                  type="button"
+                  onClick={() => setSelectedDate(dateKey)}
+                >
+                  <span className="day-number">{date.getDate()}</span>
+                  <div className="day-events">
+                    {daySchedules.slice(0, 3).map((schedule) => (
+                      <span className="day-event" key={schedule.id}>
+                        {formatTime(schedule.startAt)} {schedule.scriptName}
+                      </span>
+                    ))}
+                    {daySchedules.length > 3 ? (
+                      <span className="day-more">+{daySchedules.length - 3} 场</span>
+                    ) : null}
+                  </div>
+                </button>
+              );
+            })}
           </div>
-        ) : (
-          <p className="empty-list">当天暂无排班</p>
-        )}
-      </section>
+          <section className="day-detail">
+            <div className="day-detail-head">
+              <h3>{formatDateLabel(selectedDate)}</h3>
+              <span>{selectedSchedules.length} 场</span>
+            </div>
+            {selectedSchedules.length ? (
+              <div className="schedule-list">
+                {selectedSchedules.map((schedule) => (
+                  <ScheduleCard
+                    canManage={canManage}
+                    key={schedule.id}
+                    schedule={schedule}
+                    onDelete={() => deleteSchedule(schedule)}
+                    onEdit={() => setEditingSchedule(schedule)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="empty-list">当天暂无排班</p>
+            )}
+          </section>
+          {canManage ? <DmSummaryPanel items={dmSummary} monthLabel={monthLabel} /> : null}
+        </div>
+        <ReminderPanel
+          monthLabel={monthLabel}
+          pendingDmSchedules={pendingDmSchedules}
+          playersNotReadySchedules={playersNotReadySchedules}
+        />
+      </div>
       {canManage && (creatingDate || editingSchedule) ? (
         <ScheduleModal
           initialDate={creatingDate ?? selectedDate}
@@ -614,7 +671,6 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
           }}
         />
       ) : null}
-      {canManage ? <DmSummaryPanel items={dmSummary} monthLabel={monthLabel} /> : null}
     </article>
   );
 }
@@ -656,6 +712,94 @@ function DmSummaryPanel({ items, monthLabel }: { items: DmMonthlySummary[]; mont
         </div>
       ) : (
         <p className="empty-list">暂无 DM 统计</p>
+      )}
+    </section>
+  );
+}
+
+function ReminderPanel({
+  monthLabel,
+  pendingDmSchedules,
+  playersNotReadySchedules,
+}: {
+  monthLabel: string;
+  pendingDmSchedules: Schedule[];
+  playersNotReadySchedules: Schedule[];
+}) {
+  const hasReminders = pendingDmSchedules.length > 0 || playersNotReadySchedules.length > 0;
+
+  return (
+    <aside className="reminder-panel">
+      <div className="panel-title">
+        <AlertTriangle size={20} />
+        <h2>本月待办</h2>
+      </div>
+      <p className="reminder-month">{monthLabel}</p>
+      {hasReminders ? (
+        <div className="reminder-list">
+          <ReminderSection
+            emptyText="没有 DM 待定的车次"
+            icon={<AlertTriangle size={16} />}
+            items={pendingDmSchedules}
+            title="DM 待定"
+            renderDetail={(schedule) =>
+              schedule.roles
+                .filter((role) => role.dmId === null)
+                .map((role) => role.roleName)
+                .join("、")
+            }
+          />
+          <ReminderSection
+            emptyText="没有需要摇玩家的车次"
+            icon={<UsersRound size={16} />}
+            items={playersNotReadySchedules}
+            title="需要摇玩家"
+            renderDetail={() => "玩家未摇齐"}
+          />
+        </div>
+      ) : (
+        <p className="empty-list">本月暂时没有待办</p>
+      )}
+    </aside>
+  );
+}
+
+function ReminderSection({
+  emptyText,
+  icon,
+  items,
+  renderDetail,
+  title,
+}: {
+  emptyText: string;
+  icon: React.ReactNode;
+  items: Schedule[];
+  renderDetail: (schedule: Schedule) => string;
+  title: string;
+}) {
+  return (
+    <section className="reminder-section">
+      <div className="reminder-section-head">
+        <span>
+          {icon}
+          {title}
+        </span>
+        <b>{items.length}</b>
+      </div>
+      {items.length ? (
+        <div className="reminder-items">
+          {items.map((schedule) => (
+            <article className="reminder-item" key={`${title}-${schedule.id}`}>
+              <strong>{schedule.scriptName}</strong>
+              <span>
+                {schedule.startAt.slice(5, 10)} {formatTime(schedule.startAt)} · {schedule.roomName}
+              </span>
+              <em>{renderDetail(schedule)}</em>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="reminder-empty">{emptyText}</p>
       )}
     </section>
   );
@@ -711,10 +855,22 @@ function ScheduleCard({
           <MapPin size={14} />
           {schedule.roomName}
         </span>
+        {!schedule.playersReady ? (
+          <span className="warning-meta">
+            <UsersRound size={14} />
+            需摇玩家
+          </span>
+        ) : null}
+        {schedule.roles.some((role) => role.dmId === null) ? (
+          <span className="warning-meta">
+            <AlertTriangle size={14} />
+            DM 待定
+          </span>
+        ) : null}
       </div>
       <div className="role-grid">
         {schedule.roles.map((role) => (
-          <span key={role.id}>
+          <span className={role.dmId === null ? "pending-role" : ""} key={role.id}>
             {role.roleName}：{role.dmName}
           </span>
         ))}
@@ -752,13 +908,14 @@ function ScheduleModal({
   const selectedScript = scripts.find((script) => String(script.id) === form.scriptId);
   const selectedRoom = rooms.find((room) => String(room.id) === form.roomId);
   const roleNames = selectedScript?.roles.map((role) => role.name) ?? [];
-  const assignedDmIds = new Set(Object.values(form.assignments).filter(Boolean));
+  const assignedDmIds = new Set(
+    Object.values(form.assignments).filter((value) => value && value !== pendingDmValue),
+  );
   const availabilityRooms = new Map(availability?.rooms.map((room) => [room.id, room]) ?? []);
   const availabilityDms = new Map(availability?.dms.map((dm) => [dm.id, dm]) ?? []);
   const missingSetupMessages = [
     scripts.length ? "" : "请先在右侧后台配置里添加剧本",
     rooms.length ? "" : "请先在右侧后台配置里添加房间",
-    dms.length ? "" : "请先在右侧后台配置里添加 DM",
   ].filter(Boolean);
   const canSaveSchedule =
     !saving &&
@@ -1017,6 +1174,18 @@ function ScheduleModal({
               </small>
             </div>
           </div>
+          <label className="player-ready-field">
+            玩家是否摇齐
+            <select
+              value={form.playersReady ? "yes" : "no"}
+              onChange={(event) =>
+                setForm({ ...form, playersReady: event.target.value === "yes" })
+              }
+            >
+              <option value="yes">是，玩家已摇齐</option>
+              <option value="no">否，需要继续摇玩家</option>
+            </select>
+          </label>
           <div className="assignment-panel">
             <div className="assignment-head">
               <h3>角色 DM</h3>
@@ -1032,6 +1201,7 @@ function ScheduleModal({
                       onChange={(event) => updateAssignment(roleName, event.target.value)}
                     >
                       <option value="">请选择 DM</option>
+                      <option value={pendingDmValue}>DM 待定</option>
                       {dms.map((dm) => {
                         const selectedByOtherRole =
                           assignedDmIds.has(String(dm.id)) &&
@@ -1066,7 +1236,7 @@ function ScheduleModal({
               </p>
             )}
             {roleNames.length && !dms.length ? (
-              <p className="empty-list">请先在后台配置里添加 DM</p>
+              <p className="empty-list">暂无 DM，可先选择 DM 待定</p>
             ) : null}
           </div>
           <label>
@@ -1689,6 +1859,7 @@ function createEmptyScheduleForm(date: string): ScheduleFormState {
     scriptId: "",
     startTime: "10:00",
     roomId: "",
+    playersReady: true,
     note: "",
     assignments: {},
   };
@@ -1701,9 +1872,13 @@ function formFromSchedule(schedule: Schedule): ScheduleFormState {
     scriptId: String(schedule.scriptId),
     startTime: formatTime(schedule.startAt),
     roomId: String(schedule.roomId),
+    playersReady: schedule.playersReady,
     note: schedule.note,
     assignments: Object.fromEntries(
-      schedule.roles.map((role) => [role.roleName, String(role.dmId)]),
+      schedule.roles.map((role) => [
+        role.roleName,
+        role.dmId === null ? pendingDmValue : String(role.dmId),
+      ]),
     ),
   };
 }
@@ -1715,12 +1890,13 @@ function buildSchedulePayload(form: ScheduleFormState, excludeId?: number) {
     roomId: Number(form.roomId),
     date: form.date,
     startTime: form.startTime,
+    playersReady: form.playersReady,
     note: form.note,
     assignments: Object.entries(form.assignments)
       .filter(([_roleName, dmId]) => dmId)
       .map(([roleName, dmId]) => ({
         roleName,
-        dmId: Number(dmId),
+        dmId: dmId === pendingDmValue ? null : Number(dmId),
       })),
   };
 }
@@ -1846,6 +2022,20 @@ function readStoredSession(): Session | null {
     clearStoredSession();
     return null;
   }
+}
+
+function readStoredTheme(): Theme {
+  const storedTheme = localStorage.getItem(themeStorageKey);
+
+  if (storedTheme === "light" || storedTheme === "dark") {
+    return storedTheme;
+  }
+
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function toggleTheme(theme: Theme): Theme {
+  return theme === "dark" ? "light" : "dark";
 }
 
 function storeSession(session: Session) {

@@ -120,6 +120,31 @@ async function main() {
 
   assert(updatedSchedule.note === "冒烟测试编辑自身", "编辑排班失败");
 
+  const pendingSchedule = await createSchedule(adminHeaders, {
+    scriptId: scriptB.id,
+    roomId: room2.id,
+    date: "2026-07-12",
+    startTime: "12:00",
+    note: "冒烟测试待定DM和摇玩家",
+    playersReady: false,
+    assignments: [
+      {
+        roleName: "侦探",
+        dmId: null,
+      },
+      {
+        roleName: "凶手",
+        dmId: null,
+      },
+    ],
+  });
+
+  assert(pendingSchedule.playersReady === false, "玩家未摇齐状态没有保存");
+  assert(
+    pendingSchedule.roles.every((role) => role.dmId === null && role.dmName === "DM 待定"),
+    "DM 待定角色没有保存",
+  );
+
   await expectConflict(
     "剧本最大车数限制",
     "/api/admin/schedules",
@@ -325,6 +350,8 @@ async function main() {
           "availability",
           "create schedule",
           "update schedule",
+          "pending dm schedule",
+          "players not ready status",
           "delete schedule",
           "script capacity conflict",
           "room cleaning conflict",

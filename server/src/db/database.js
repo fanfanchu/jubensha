@@ -34,8 +34,14 @@ export function openDatabase() {
 export function initializeDatabase(database = openDatabase()) {
   const schema = readFileSync(schemaPath, "utf8");
   database.exec(schema);
+  migrateDatabase(database);
   seedSettings(database);
   return database;
+}
+
+export function migrateDatabase(database) {
+  addColumnIfMissing(database, "schedules", "players_ready", "INTEGER NOT NULL DEFAULT 1");
+  allowPendingScheduleDm(database);
 }
 
 export function seedSettings(database) {
@@ -70,4 +76,78 @@ export function getSchemaSummary(database) {
     )
     .all()
     .map((row) => row.name);
+}
+
+function addColumnIfMissing(database, table, column, definition) {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all();
+
+  if (columns.some((item) => item.name === column)) {
+    return;
+  }
+
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+}
+
+function allowPendingScheduleDm(database) {
+  const columns = database.prepare("PRAGMA table_info(schedule_roles)").all();
+  const dmColumn = columns.find((item) => item.name === "dm_id");
+
+  if (!dmColumn?.notnull) {
+    return;
+  }
+
+  database.exec("PRAGMA foreign_keys = OFF;");
+  database.exec("BEGIN;");
+
+  try {
+    database.exec(`
+      CREATE TABLE schedule_roles_next (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        schedule_id INTEGER NOT NULL,
+        role_name TEXT NOT NULL,
+        dm_id INTEGER,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+        FOREIGN KEY (dm_id) REFERENCES dms(id),
+        UNIQUE (schedule_id, role_name),
+        UNIQUE (schedule_id, dm_id)
+      );
+
+      INSERT INTO schedule_roles_next (
+        id,
+        schedule_id,
+        role_name,
+        dm_id,
+        sort_order,
+        created_at,
+        updated_at
+      )
+      SELECT
+        id,
+        schedule_id,
+        role_name,
+        dm_id,
+        sort_order,
+        created_at,
+        updated_at
+      FROM schedule_roles;
+
+      DROP TABLE schedule_roles;
+      ALTER TABLE schedule_roles_next RENAME TO schedule_roles;
+
+      CREATE INDEX IF NOT EXISTS idx_schedule_roles_schedule_id
+        ON schedule_roles(schedule_id);
+
+      CREATE INDEX IF NOT EXISTS idx_schedule_roles_dm_id
+        ON schedule_roles(dm_id);
+    `);
+    database.exec("COMMIT;");
+  } catch (error) {
+    database.exec("ROLLBACK;");
+    throw error;
+  } finally {
+    database.exec("PRAGMA foreign_keys = ON;");
+  }
 }
