@@ -130,6 +130,9 @@ function saveSchedule(database, payload, id = null) {
             room_available_at = ?,
             business_date = ?,
             players_ready = ?,
+            price_cents = ?,
+            player_count = ?,
+            revenue_cents = ?,
             note = ?,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
@@ -143,6 +146,9 @@ function saveSchedule(database, payload, id = null) {
           prepared.roomAvailableAt,
           prepared.businessDate,
           prepared.playersReady ? 1 : 0,
+          prepared.priceCents,
+          prepared.playerCount,
+          prepared.revenueCents,
           prepared.note,
           id,
         );
@@ -160,9 +166,12 @@ function saveSchedule(database, payload, id = null) {
             room_available_at,
             business_date,
             players_ready,
+            price_cents,
+            player_count,
+            revenue_cents,
             note
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
@@ -173,6 +182,9 @@ function saveSchedule(database, payload, id = null) {
           prepared.roomAvailableAt,
           prepared.businessDate,
           prepared.playersReady ? 1 : 0,
+          prepared.priceCents,
+          prepared.playerCount,
+          prepared.revenueCents,
           prepared.note,
         );
 
@@ -395,6 +407,8 @@ function prepareSchedule(database, payload) {
         name,
         duration_hours AS durationHours,
         max_parallel_sessions AS maxParallelSessions,
+        price_cents AS priceCents,
+        player_count AS playerCount,
         is_active AS isActive
       FROM scripts
       WHERE id = ?
@@ -487,6 +501,9 @@ function prepareSchedule(database, payload) {
     roomAvailableAt: toLocalIso(addMinutes(endDate, cleaningMinutes)),
     businessDate: getBusinessDate(startDate, businessDayStartHour),
     playersReady: payload.playersReady,
+    priceCents: script.priceCents ?? 0,
+    playerCount: script.playerCount ?? 0,
+    revenueCents: (script.priceCents ?? 0) * (script.playerCount ?? 0),
     note: payload.note,
     assignments: payload.assignments.map((assignment) => ({
       ...assignment,
@@ -512,6 +529,9 @@ function getSchedules(database, query) {
         schedules.room_available_at AS roomAvailableAt,
         schedules.business_date AS businessDate,
         schedules.players_ready AS playersReady,
+        schedules.price_cents AS priceCents,
+        schedules.player_count AS playerCount,
+        schedules.revenue_cents AS revenueCents,
         schedules.note,
         schedules.created_at AS createdAt,
         schedules.updated_at AS updatedAt
@@ -566,6 +586,9 @@ function getScheduleById(database, id) {
         schedules.room_available_at AS roomAvailableAt,
         schedules.business_date AS businessDate,
         schedules.players_ready AS playersReady,
+        schedules.price_cents AS priceCents,
+        schedules.player_count AS playerCount,
+        schedules.revenue_cents AS revenueCents,
         schedules.note,
         schedules.created_at AS createdAt,
         schedules.updated_at AS updatedAt
@@ -607,6 +630,9 @@ function formatSchedule(schedule, roles) {
   return {
     ...schedule,
     playersReady: Boolean(schedule.playersReady),
+    priceCents: schedule.priceCents ?? 0,
+    playerCount: schedule.playerCount ?? 0,
+    revenueCents: schedule.revenueCents ?? 0,
     roles: roles.map((role) => ({
       ...role,
       dmId: role.dmId ?? null,
@@ -692,6 +718,9 @@ function buildMonthlyWorkbook(schedules, from, to) {
     { header: "剧本", key: "scriptName", width: 24 },
     { header: "房间", key: "roomName", width: 16 },
     { header: "玩家是否摇齐", key: "playersReady", width: 16 },
+    { header: "单人价格", key: "price", width: 12 },
+    { header: "玩家人数", key: "playerCount", width: 12 },
+    { header: "一车收入", key: "revenue", width: 12 },
     { header: "角色-DM", key: "roles", width: 42 },
     { header: "备注", key: "note", width: 32 },
   ];
@@ -704,6 +733,9 @@ function buildMonthlyWorkbook(schedules, from, to) {
       scriptName: schedule.scriptName,
       roomName: schedule.roomName,
       playersReady: schedule.playersReady ? "是" : "否",
+      price: centsToYuan(schedule.priceCents),
+      playerCount: schedule.playerCount,
+      revenue: centsToYuan(schedule.revenueCents),
       roles: schedule.roles.map((role) => `${role.roleName}-${role.dmName}`).join("；"),
       note: schedule.note,
     });

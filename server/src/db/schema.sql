@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS scripts (
   name TEXT NOT NULL UNIQUE,
   duration_hours INTEGER NOT NULL CHECK (duration_hours > 0),
   max_parallel_sessions INTEGER NOT NULL CHECK (max_parallel_sessions > 0),
+  price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
+  player_count INTEGER NOT NULL DEFAULT 0 CHECK (player_count >= 0),
   is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -65,6 +67,9 @@ CREATE TABLE IF NOT EXISTS schedules (
   room_available_at TEXT NOT NULL,
   business_date TEXT NOT NULL,
   players_ready INTEGER NOT NULL DEFAULT 1 CHECK (players_ready IN (0, 1)),
+  price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
+  player_count INTEGER NOT NULL DEFAULT 0 CHECK (player_count >= 0),
+  revenue_cents INTEGER NOT NULL DEFAULT 0 CHECK (revenue_cents >= 0),
   note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

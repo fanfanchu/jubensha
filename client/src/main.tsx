@@ -54,6 +54,8 @@ type Script = {
   name: string;
   durationHours: number;
   maxParallelSessions: number;
+  priceCents: number;
+  playerCount: number;
   isActive: boolean;
   roles: ScriptRole[];
 };
@@ -98,6 +100,9 @@ type Schedule = {
   roomAvailableAt: string;
   businessDate: string;
   playersReady: boolean;
+  priceCents: number;
+  playerCount: number;
+  revenueCents: number;
   note: string;
   roles: ScheduleRole[];
 };
@@ -182,6 +187,8 @@ type ScriptFormState = {
   name: string;
   durationHours: string;
   maxParallelSessions: string;
+  priceYuan: string;
+  playerCount: string;
   roles: ScriptRoleForm[];
   isActive: boolean;
 };
@@ -207,6 +214,8 @@ const emptyScriptForm: ScriptFormState = {
   name: "",
   durationHours: "6",
   maxParallelSessions: "1",
+  priceYuan: "0",
+  playerCount: "0",
   roles: [{ name: "", salaryYuan: "0" }],
   isActive: true,
 };
@@ -451,6 +460,7 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
   const [creatingDate, setCreatingDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [openingCopied, setOpeningCopied] = useState(false);
   const [error, setError] = useState("");
 
   const monthLabel = `${monthStart.getFullYear()}年${monthStart.getMonth() + 1}月`;
@@ -468,6 +478,7 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
     () => getDmAvailability(dms, schedules, selectedDate),
     [dms, schedules, selectedDate],
   );
+  const dashboard = useMemo(() => getDashboardMetrics(schedules), [schedules]);
   const pendingDmSchedules = useMemo(
     () => schedules.filter((schedule) => schedule.roles.some((role) => role.dmId === null)),
     [schedules],
@@ -583,6 +594,16 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
     }
   }
 
+  async function copyOpeningSheet() {
+    try {
+      await copyText(buildOpeningSheetText(selectedDate, selectedSchedules));
+      setOpeningCopied(true);
+      window.setTimeout(() => setOpeningCopied(false), 1600);
+    } catch {
+      window.alert("复制失败，请稍后重试");
+    }
+  }
+
   function moveMonth(offset: number) {
     const nextMonth = addMonths(monthStart, offset);
     setMonthStart(nextMonth);
@@ -640,6 +661,10 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
               新增
             </button>
           ) : null}
+          <button className="ghost-button" type="button" onClick={copyOpeningSheet}>
+            {openingCopied ? <Check size={16} /> : <Copy size={16} />}
+            {openingCopied ? "已复制" : "复制开场单"}
+          </button>
           {canManage ? (
             <button
               className={salaryLock?.locked ? "ghost-button lock-button locked" : "ghost-button lock-button"}
@@ -698,6 +723,7 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
               : `${schedules.length} 场`}
         </span>
       </div>
+      <DashboardStrip metrics={dashboard} />
       <div className="search-row">
         <Search size={17} />
         <input
@@ -750,7 +776,15 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
                   <span className="day-number">{date.getDate()}</span>
                   <div className="day-events">
                     {daySchedules.slice(0, 3).map((schedule) => (
-                      <span className="day-event" key={schedule.id}>
+                      <span
+                        className={[
+                          "day-event",
+                          salaryLock?.locked ? "event-locked" : getScheduleStatusClass(schedule),
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        key={schedule.id}
+                      >
                         {formatTime(schedule.startAt)} {schedule.scriptName}
                       </span>
                     ))}
@@ -858,6 +892,39 @@ function DmSummaryPanel({ items, monthLabel }: { items: DmMonthlySummary[]; mont
       ) : (
         <p className="empty-list">暂无 DM 统计</p>
       )}
+    </section>
+  );
+}
+
+function DashboardStrip({
+  metrics,
+}: {
+  metrics: {
+    totalSchedules: number;
+    revenueCents: number;
+    salaryCents: number;
+    pendingDmCount: number;
+    playersNotReadyCount: number;
+    topScript: string;
+  };
+}) {
+  const items = [
+    ["本月场次", `${metrics.totalSchedules} 场`],
+    ["收入估算", formatMoney(metrics.revenueCents)],
+    ["DM 工资", formatMoney(metrics.salaryCents)],
+    ["DM 待定", `${metrics.pendingDmCount} 场`],
+    ["玩家未齐", `${metrics.playersNotReadyCount} 场`],
+    ["热门剧本", metrics.topScript || "暂无"],
+  ];
+
+  return (
+    <section className="dashboard-strip" aria-label="本月数据看板">
+      {items.map(([label, value]) => (
+        <article className="dashboard-metric" key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </article>
+      ))}
     </section>
   );
 }
@@ -1081,6 +1148,7 @@ function ScheduleCard({
           <MapPin size={14} />
           {schedule.roomName}
         </span>
+        {canManage ? <span>收入 {formatMoney(schedule.revenueCents)}</span> : null}
         {!schedule.playersReady ? (
           <span className="warning-meta">
             <UsersRound size={14} />
@@ -1656,6 +1724,8 @@ function AdminConfig({ token, activeTab }: { token: string; activeTab: ConfigTab
           name: scriptForm.name,
           durationHours: Number(scriptForm.durationHours),
           maxParallelSessions: Number(scriptForm.maxParallelSessions),
+          priceYuan: Number(scriptForm.priceYuan),
+          playerCount: Number(scriptForm.playerCount),
           roles: normalizeScriptRoleForms(scriptForm.roles),
           isActive: scriptForm.isActive,
         },
@@ -1826,6 +1896,28 @@ function ScriptConfig({
             />
           </label>
         </div>
+        <div className="form-row">
+          <label>
+            单人价格
+            <input
+              min="0"
+              step="1"
+              type="number"
+              value={form.priceYuan}
+              onChange={(event) => onChange({ ...form, priceYuan: event.target.value })}
+            />
+          </label>
+          <label>
+            玩家人数
+            <input
+              min="0"
+              step="1"
+              type="number"
+              value={form.playerCount}
+              onChange={(event) => onChange({ ...form, playerCount: event.target.value })}
+            />
+          </label>
+        </div>
         <div className="role-salary-editor">
           <div className="role-salary-head">
             <h4>角色工资</h4>
@@ -1891,6 +1983,7 @@ function ScriptConfig({
               </div>
               <p>
                 {script.durationHours} 小时 · 同时最多 {script.maxParallelSessions} 车
+                · {formatMoney(script.priceCents)}/人 · {script.playerCount} 人
               </p>
               <div className="tag-list">
                 {script.roles.map((role) => (
@@ -1911,6 +2004,8 @@ function ScriptConfig({
                   name: script.name,
                   durationHours: String(script.durationHours),
                   maxParallelSessions: String(script.maxParallelSessions),
+                  priceYuan: centsToYuanInput(script.priceCents),
+                  playerCount: String(script.playerCount),
                   roles: script.roles.map((role) => ({
                     name: role.name,
                     salaryYuan: centsToYuanInput(role.salaryCents),
@@ -2386,6 +2481,97 @@ function getDmAvailability(dms: Dm[], schedules: Schedule[], selectedDate: strin
     assigned,
     available,
   };
+}
+
+function getDashboardMetrics(schedules: Schedule[]) {
+  const scriptCounts = new Map<string, number>();
+  let revenueCents = 0;
+  let salaryCents = 0;
+  let pendingDmCount = 0;
+  let playersNotReadyCount = 0;
+
+  for (const schedule of schedules) {
+    revenueCents += schedule.revenueCents ?? 0;
+
+    for (const role of schedule.roles) {
+      if (role.dmId !== null) {
+        salaryCents += role.salaryCents ?? 0;
+      }
+    }
+
+    if (schedule.roles.some((role) => role.dmId === null)) {
+      pendingDmCount += 1;
+    }
+
+    if (!schedule.playersReady) {
+      playersNotReadyCount += 1;
+    }
+
+    scriptCounts.set(schedule.scriptName, (scriptCounts.get(schedule.scriptName) ?? 0) + 1);
+  }
+
+  const topScriptEntry = Array.from(scriptCounts.entries()).sort((left, right) => {
+    if (right[1] !== left[1]) {
+      return right[1] - left[1];
+    }
+
+    return left[0].localeCompare(right[0], "zh-CN");
+  })[0];
+
+  return {
+    totalSchedules: schedules.length,
+    revenueCents,
+    salaryCents,
+    pendingDmCount,
+    playersNotReadyCount,
+    topScript: topScriptEntry ? `${topScriptEntry[0]} ${topScriptEntry[1]}场` : "",
+  };
+}
+
+function getScheduleStatusClass(schedule: Schedule) {
+  const hasPendingDm = schedule.roles.some((role) => role.dmId === null);
+  const playersNotReady = !schedule.playersReady;
+
+  if (hasPendingDm && playersNotReady) {
+    return "event-danger";
+  }
+
+  if (hasPendingDm) {
+    return "event-warning";
+  }
+
+  if (playersNotReady) {
+    return "event-attention";
+  }
+
+  return "event-ok";
+}
+
+function buildOpeningSheetText(date: string, schedules: Schedule[]) {
+  const sortedSchedules = [...schedules].sort((left, right) =>
+    left.startAt.localeCompare(right.startAt),
+  );
+  const lines = [`${formatDateLabel(date)}开场`];
+
+  if (sortedSchedules.length === 0) {
+    lines.push("暂无排班");
+    return lines.join("\n");
+  }
+
+  for (const schedule of sortedSchedules) {
+    lines.push(
+      "",
+      `${formatTime(schedule.startAt)}《${schedule.scriptName}》 ${schedule.roomName}`,
+      `DM：${schedule.roles.map((role) => role.dmName).join(" / ")}`,
+      `玩家：${formatPlayersReady(schedule.playersReady)}`,
+    );
+
+    if (schedule.note) {
+      lines.push(`备注：${schedule.note}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function getScheduleChanges(

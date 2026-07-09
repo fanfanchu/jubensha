@@ -41,6 +41,11 @@ export function initializeDatabase(database = openDatabase()) {
 
 export function migrateDatabase(database) {
   addColumnIfMissing(database, "schedules", "players_ready", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(database, "scripts", "price_cents", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "scripts", "player_count", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "schedules", "price_cents", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "schedules", "player_count", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "schedules", "revenue_cents", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "script_roles", "salary_cents", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(database, "schedule_roles", "salary_cents", "INTEGER NOT NULL DEFAULT 0");
   allowPendingScheduleDm(database);

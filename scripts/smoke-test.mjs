@@ -63,6 +63,8 @@ async function main() {
     ],
     1,
     10,
+    198,
+    5,
   );
   const scriptB = await createScript(adminHeaders, "冒烟测试剧本B", ["侦探", "凶手"], 3, 4);
   const room1 = await createRoom(adminHeaders, "冒烟测试一号房");
@@ -119,6 +121,9 @@ async function main() {
     firstSchedule.roles.find((role) => role.roleName === "凶手")?.salaryCents === 8000,
     "排班没有保存凶手角色工资快照",
   );
+  assert(firstSchedule.priceCents === 19800, "排班没有保存单人价格快照");
+  assert(firstSchedule.playerCount === 5, "排班没有保存玩家人数快照");
+  assert(firstSchedule.revenueCents === 99000, "排班没有保存收入快照");
 
   const updatedSchedule = await request(`/api/admin/schedules/${firstSchedule.id}`, {
     method: "PUT",
@@ -480,7 +485,15 @@ async function expectConflict(label, path, options, code) {
   assert(conflictCode === code, `${label} 返回错误代码不符：${conflictCode}`);
 }
 
-async function createScript(headers, name, roles, maxParallelSessions, durationHours) {
+async function createScript(
+  headers,
+  name,
+  roles,
+  maxParallelSessions,
+  durationHours,
+  priceYuan = 0,
+  playerCount = 0,
+) {
   const script = await request("/api/admin/scripts", {
     method: "POST",
     headers,
@@ -488,6 +501,8 @@ async function createScript(headers, name, roles, maxParallelSessions, durationH
       name: `${name}${unique}`,
       durationHours,
       maxParallelSessions,
+      priceYuan,
+      playerCount,
       roles,
       isActive: true,
     },

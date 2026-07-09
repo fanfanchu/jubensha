@@ -524,9 +524,62 @@ h2 {
   background: var(--primary-soft);
 }
 
+.day-event.event-ok {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.day-event.event-warning {
+  color: var(--warning-text);
+  background: var(--warning-bg);
+}
+
+.day-event.event-attention {
+  color: var(--accent-text);
+  background: var(--accent-bg);
+}
+
+.day-event.event-danger {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.day-event.event-locked {
+  color: var(--muted);
+  background: var(--meta-bg);
+}
+
 .day-more {
   color: var(--accent-text);
   background: var(--accent-bg);
+}
+
+.dashboard-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dashboard-metric {
+  display: grid;
+  gap: 5px;
+  min-height: 74px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel-softer);
+}
+
+.dashboard-metric span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dashboard-metric strong {
+  min-width: 0;
+  color: var(--heading);
+  font-size: 16px;
+  overflow-wrap: anywhere;
 }
 
 .day-detail {
@@ -1337,6 +1390,10 @@ h2 {
     grid-template-columns: 1fr;
   }
 
+  .dashboard-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .reminder-panel {
     position: static;
   }
@@ -1404,6 +1461,10 @@ h2 {
 
   .calendar-grid {
     gap: 3px;
+  }
+
+  .dashboard-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .weekday {

@@ -181,6 +181,8 @@ function getScripts(database) {
         name,
         duration_hours AS durationHours,
         max_parallel_sessions AS maxParallelSessions,
+        price_cents AS priceCents,
+        player_count AS playerCount,
         is_active AS isActive,
         created_at AS createdAt,
         updated_at AS updatedAt
@@ -223,6 +225,8 @@ function saveScript(database, payload, id = null) {
             name = ?,
             duration_hours = ?,
             max_parallel_sessions = ?,
+            price_cents = ?,
+            player_count = ?,
             is_active = ?,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
@@ -232,6 +236,8 @@ function saveScript(database, payload, id = null) {
           payload.name,
           payload.durationHours,
           payload.maxParallelSessions,
+          payload.priceCents,
+          payload.playerCount,
           payload.isActive ? 1 : 0,
           id,
         );
@@ -241,14 +247,23 @@ function saveScript(database, payload, id = null) {
       const result = database
         .prepare(
           `
-          INSERT INTO scripts (name, duration_hours, max_parallel_sessions, is_active)
-          VALUES (?, ?, ?, ?)
+          INSERT INTO scripts (
+            name,
+            duration_hours,
+            max_parallel_sessions,
+            price_cents,
+            player_count,
+            is_active
+          )
+          VALUES (?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
           payload.name,
           payload.durationHours,
           payload.maxParallelSessions,
+          payload.priceCents,
+          payload.playerCount,
           payload.isActive ? 1 : 0,
         );
 
@@ -425,6 +440,11 @@ function parseScriptPayload(body) {
   const name = normalizeText(body?.name);
   const durationHours = Number(body?.durationHours);
   const maxParallelSessions = Number(body?.maxParallelSessions);
+  const priceCents =
+    body?.priceCents !== undefined
+      ? parseSalaryCents(body.priceCents)
+      : yuanToCents(body?.priceYuan ?? body?.price);
+  const playerCount = Number(body?.playerCount ?? 0);
   const roles = normalizeScriptRoles(body?.roles);
 
   if (!name) {
@@ -439,6 +459,10 @@ function parseScriptPayload(body) {
     return { error: validationError("最多开车数必须是正整数") };
   }
 
+  if (!Number.isInteger(playerCount) || playerCount < 0) {
+    return { error: validationError("玩家人数必须是非负整数") };
+  }
+
   if (roles.length === 0) {
     return { error: validationError("请至少填写一个角色") };
   }
@@ -448,6 +472,8 @@ function parseScriptPayload(body) {
       name,
       durationHours,
       maxParallelSessions,
+      priceCents,
+      playerCount,
       roles,
       isActive: toBoolean(body?.isActive, true),
     },
