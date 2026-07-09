@@ -47,7 +47,22 @@ async function main() {
     401,
   );
 
-  const scriptA = await createScript(adminHeaders, "冒烟测试剧本A", ["侦探", "凶手"], 1, 10);
+  const scriptA = await createScript(
+    adminHeaders,
+    "冒烟测试剧本A",
+    [
+      {
+        name: "侦探",
+        salaryYuan: 120,
+      },
+      {
+        name: "凶手",
+        salaryYuan: 80,
+      },
+    ],
+    1,
+    10,
+  );
   const scriptB = await createScript(adminHeaders, "冒烟测试剧本B", ["侦探", "凶手"], 3, 4);
   const room1 = await createRoom(adminHeaders, "冒烟测试一号房");
   const room2 = await createRoom(adminHeaders, "冒烟测试二号房");
@@ -95,6 +110,14 @@ async function main() {
   });
 
   assert(firstSchedule.businessDate === "2026-07-08", "工作日计算错误");
+  assert(
+    firstSchedule.roles.find((role) => role.roleName === "侦探")?.salaryCents === 12000,
+    "排班没有保存侦探角色工资快照",
+  );
+  assert(
+    firstSchedule.roles.find((role) => role.roleName === "凶手")?.salaryCents === 8000,
+    "排班没有保存凶手角色工资快照",
+  );
 
   const updatedSchedule = await request(`/api/admin/schedules/${firstSchedule.id}`, {
     method: "PUT",
@@ -316,6 +339,8 @@ async function main() {
   const dm2Summary = dmSummary.find((item) => item.id === dm2.id);
   assert(dm1Summary?.total === 1, "DM 月统计没有统计到侦探 DM");
   assert(dm2Summary?.total === 1, "DM 月统计没有统计到凶手 DM");
+  assert(dm1Summary?.totalSalaryCents === 12000, "DM 月统计没有统计侦探工资");
+  assert(dm2Summary?.totalSalaryCents === 8000, "DM 月统计没有统计凶手工资");
 
   const excel = await request("/api/admin/reports/monthly.xlsx?from=2026-07-01&to=2026-08-01", {
     headers: adminHeaders,
@@ -362,6 +387,7 @@ async function main() {
           "viewer read",
           "viewer forbidden write",
           "dm monthly summary",
+          "dm salary summary",
           "monthly excel export",
         ],
       },

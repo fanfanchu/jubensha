@@ -41,6 +41,7 @@ type ScriptRole = {
   id: number;
   scriptId: number;
   name: string;
+  salaryCents: number;
   sortOrder: number;
 };
 
@@ -78,6 +79,7 @@ type ScheduleRole = {
   roleName: string;
   dmId: number | null;
   dmName: string;
+  salaryCents: number;
   sortOrder: number;
 };
 
@@ -146,6 +148,7 @@ type DmMonthlySummary = {
   name: string;
   isActive: boolean;
   total: number;
+  totalSalaryCents: number;
   details: Array<{
     scheduleId: number;
     scriptName: string;
@@ -154,7 +157,13 @@ type DmMonthlySummary = {
     endAt: string;
     businessDate: string;
     roleName: string;
+    salaryCents: number;
   }>;
+};
+
+type ScriptRoleForm = {
+  name: string;
+  salaryYuan: string;
 };
 
 type ScriptFormState = {
@@ -162,7 +171,7 @@ type ScriptFormState = {
   name: string;
   durationHours: string;
   maxParallelSessions: string;
-  rolesText: string;
+  roles: ScriptRoleForm[];
   isActive: boolean;
 };
 
@@ -187,7 +196,7 @@ const emptyScriptForm: ScriptFormState = {
   name: "",
   durationHours: "6",
   maxParallelSessions: "1",
-  rolesText: "",
+  roles: [{ name: "", salaryYuan: "0" }],
   isActive: true,
 };
 
@@ -701,13 +710,14 @@ function DmSummaryPanel({ items, monthLabel }: { items: DmMonthlySummary[]; mont
                 <span>{item.isActive ? "在职" : "停用"}</span>
               </div>
               <b>{item.total} 车</b>
+              <strong className="salary-total">工资 {formatMoney(item.totalSalaryCents)}</strong>
               {item.details.length ? (
                 <p>
                   {item.details
                     .slice(0, 4)
                     .map(
                       (detail) =>
-                        `${detail.startAt.slice(5, 10)} ${formatTime(detail.startAt)} ${detail.scriptName}`,
+                        `${detail.startAt.slice(5, 10)} ${formatTime(detail.startAt)} ${detail.scriptName} ${detail.roleName} ${formatMoney(detail.salaryCents)}`,
                     )
                     .join("；")}
                   {item.details.length > 4 ? `；另 ${item.details.length - 4} 场` : ""}
@@ -901,6 +911,7 @@ function ScheduleCard({
         {schedule.roles.map((role) => (
           <span className={role.dmId === null ? "pending-role" : ""} key={role.id}>
             {role.roleName}：{role.dmName}
+            {canManage && role.dmId !== null ? `（${formatMoney(role.salaryCents)}）` : ""}
           </span>
         ))}
       </div>
@@ -938,6 +949,7 @@ function ScheduleModal({
   const selectedScript = scripts.find((script) => String(script.id) === form.scriptId);
   const selectedRoom = rooms.find((room) => String(room.id) === form.roomId);
   const roleNames = selectedScript?.roles.map((role) => role.name) ?? [];
+  const rolesByName = new Map(selectedScript?.roles.map((role) => [role.name, role]) ?? []);
   const assignedDmIds = new Set(
     Object.values(form.assignments).filter((value) => value && value !== pendingDmValue),
   );
@@ -1240,7 +1252,10 @@ function ScheduleModal({
               <div className="assignment-grid">
                 {roleNames.map((roleName) => (
                   <label key={roleName}>
-                    {roleName}
+                    <span className="assignment-label">
+                      {roleName}
+                      <small>{formatMoney(rolesByName.get(roleName)?.salaryCents ?? 0)}</small>
+                    </span>
                     <select
                       value={form.assignments[roleName] ?? ""}
                       onChange={(event) => updateAssignment(roleName, event.target.value)}
@@ -1433,7 +1448,7 @@ function AdminConfig({ token, activeTab }: { token: string; activeTab: ConfigTab
           name: scriptForm.name,
           durationHours: Number(scriptForm.durationHours),
           maxParallelSessions: Number(scriptForm.maxParallelSessions),
-          roles: splitTextList(scriptForm.rolesText),
+          roles: normalizeScriptRoleForms(scriptForm.roles),
           isActive: scriptForm.isActive,
         },
       });
@@ -1542,6 +1557,31 @@ function ScriptConfig({
   onChange: (form: ScriptFormState) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  function updateRole(index: number, patch: Partial<ScriptRoleForm>) {
+    onChange({
+      ...form,
+      roles: form.roles.map((role, roleIndex) =>
+        roleIndex === index ? { ...role, ...patch } : role,
+      ),
+    });
+  }
+
+  function addRole() {
+    onChange({
+      ...form,
+      roles: [...form.roles, { name: "", salaryYuan: "0" }],
+    });
+  }
+
+  function removeRole(index: number) {
+    const nextRoles = form.roles.filter((_role, roleIndex) => roleIndex !== index);
+
+    onChange({
+      ...form,
+      roles: nextRoles.length ? nextRoles : [{ name: "", salaryYuan: "0" }],
+    });
+  }
+
   return (
     <>
       <form className="config-form" onSubmit={onSubmit}>
@@ -1578,14 +1618,49 @@ function ScriptConfig({
             />
           </label>
         </div>
-        <label>
-          角色名
-          <textarea
-            value={form.rolesText}
-            onChange={(event) => onChange({ ...form, rolesText: event.target.value })}
-            placeholder="每行一个角色，也可以用逗号分隔"
-          />
-        </label>
+        <div className="role-salary-editor">
+          <div className="role-salary-head">
+            <h4>角色工资</h4>
+            <button className="ghost-button compact-button" type="button" onClick={addRole}>
+              <Plus size={15} />
+              加角色
+            </button>
+          </div>
+          <div className="role-salary-list">
+            {form.roles.map((role, index) => (
+              <div className="role-salary-row" key={`${index}-${role.name}`}>
+                <label>
+                  角色名
+                  <input
+                    value={role.name}
+                    onChange={(event) => updateRole(index, { name: event.target.value })}
+                    placeholder="例如：奥丁"
+                  />
+                </label>
+                <label>
+                  工资
+                  <input
+                    min="0"
+                    step="1"
+                    type="number"
+                    value={role.salaryYuan}
+                    onChange={(event) => updateRole(index, { salaryYuan: event.target.value })}
+                    placeholder="例如：200"
+                  />
+                </label>
+                <button
+                  className="icon-button small-icon-button danger-icon-button"
+                  type="button"
+                  title="删除角色"
+                  aria-label="删除角色"
+                  onClick={() => removeRole(index)}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
         <label className="switch-line">
           <input
             checked={form.isActive}
@@ -1611,7 +1686,9 @@ function ScriptConfig({
               </p>
               <div className="tag-list">
                 {script.roles.map((role) => (
-                  <span key={role.id}>{role.name}</span>
+                  <span key={role.id}>
+                    {role.name} · {formatMoney(role.salaryCents)}
+                  </span>
                 ))}
               </div>
             </div>
@@ -1626,7 +1703,10 @@ function ScriptConfig({
                   name: script.name,
                   durationHours: String(script.durationHours),
                   maxParallelSessions: String(script.maxParallelSessions),
-                  rolesText: script.roles.map((role) => role.name).join("\n"),
+                  roles: script.roles.map((role) => ({
+                    name: role.name,
+                    salaryYuan: centsToYuanInput(role.salaryCents),
+                  })),
                   isActive: script.isActive,
                 })
               }
@@ -1956,6 +2036,34 @@ function splitTextList(value: string) {
 
 function mergeTextItem(text: string, item: string) {
   return Array.from(new Set([...splitTextList(text), item])).join("\n");
+}
+
+function normalizeScriptRoleForms(roles: ScriptRoleForm[]) {
+  const seenNames = new Set<string>();
+
+  return roles
+    .map((role) => ({
+      name: role.name.trim(),
+      salaryYuan: Math.max(0, Number(role.salaryYuan || 0)),
+    }))
+    .filter((role) => {
+      if (!role.name || seenNames.has(role.name)) {
+        return false;
+      }
+
+      seenNames.add(role.name);
+      return true;
+    });
+}
+
+function formatMoney(cents: number) {
+  const yuan = cents / 100;
+  return `¥${Number.isInteger(yuan) ? yuan : yuan.toFixed(2)}`;
+}
+
+function centsToYuanInput(cents: number) {
+  const yuan = cents / 100;
+  return Number.isInteger(yuan) ? String(yuan) : yuan.toFixed(2);
 }
 
 function createEmptyScheduleForm(date: string): ScheduleFormState {

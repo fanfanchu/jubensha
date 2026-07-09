@@ -41,6 +41,8 @@ export function initializeDatabase(database = openDatabase()) {
 
 export function migrateDatabase(database) {
   addColumnIfMissing(database, "schedules", "players_ready", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(database, "script_roles", "salary_cents", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(database, "schedule_roles", "salary_cents", "INTEGER NOT NULL DEFAULT 0");
   allowPendingScheduleDm(database);
 }
 
@@ -106,6 +108,7 @@ function allowPendingScheduleDm(database) {
         schedule_id INTEGER NOT NULL,
         role_name TEXT NOT NULL,
         dm_id INTEGER,
+        salary_cents INTEGER NOT NULL DEFAULT 0,
         sort_order INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -120,6 +123,7 @@ function allowPendingScheduleDm(database) {
         schedule_id,
         role_name,
         dm_id,
+        salary_cents,
         sort_order,
         created_at,
         updated_at
@@ -129,6 +133,7 @@ function allowPendingScheduleDm(database) {
         schedule_id,
         role_name,
         dm_id,
+        COALESCE(salary_cents, 0),
         sort_order,
         created_at,
         updated_at

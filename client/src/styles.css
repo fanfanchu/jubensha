@@ -731,6 +731,11 @@ h2 {
   font-size: 24px;
 }
 
+.dm-summary-card .salary-total {
+  color: var(--heading);
+  font-size: 15px;
+}
+
 .dm-summary-card p {
   margin-bottom: 0;
   color: var(--muted);
@@ -918,6 +923,18 @@ h2 {
   font-size: 16px;
 }
 
+.assignment-label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.assignment-label small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .assignment-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -994,6 +1011,41 @@ h2 {
   margin: 0;
   color: var(--heading);
   font-size: 16px;
+}
+
+.role-salary-editor {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel);
+}
+
+.role-salary-head,
+.role-salary-row {
+  display: grid;
+  gap: 10px;
+  align-items: end;
+}
+
+.role-salary-head {
+  grid-template-columns: 1fr auto;
+}
+
+.role-salary-head h4 {
+  margin: 0;
+  color: var(--heading);
+  font-size: 15px;
+}
+
+.role-salary-list {
+  display: grid;
+  gap: 8px;
+}
+
+.role-salary-row {
+  grid-template-columns: minmax(0, 1.4fr) minmax(96px, 0.6fr) auto;
 }
 
 .config-form label {
@@ -1274,8 +1326,14 @@ h2 {
 
   .form-row,
   .record-card,
-  .three-columns {
+  .three-columns,
+  .role-salary-head,
+  .role-salary-row {
     grid-template-columns: 1fr;
+  }
+
+  .role-salary-row .icon-button {
+    width: 100%;
   }
 
   .config-toolbar,

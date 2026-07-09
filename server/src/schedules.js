@@ -181,13 +181,13 @@ function saveSchedule(database, payload, id = null) {
 
     const insertRole = database.prepare(
       `
-      INSERT INTO schedule_roles (schedule_id, role_name, dm_id, sort_order)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO schedule_roles (schedule_id, role_name, dm_id, salary_cents, sort_order)
+      VALUES (?, ?, ?, ?, ?)
       `,
     );
 
     prepared.assignments.forEach((assignment, index) => {
-      insertRole.run(id, assignment.roleName, assignment.dmId, index);
+      insertRole.run(id, assignment.roleName, assignment.dmId, assignment.salaryCents, index);
     });
   });
 
@@ -423,7 +423,11 @@ function prepareSchedule(database, payload) {
   const scriptRoles = database
     .prepare(
       `
-      SELECT id, name, sort_order AS sortOrder
+      SELECT
+        id,
+        name,
+        salary_cents AS salaryCents,
+        sort_order AS sortOrder
       FROM script_roles
       WHERE script_id = ?
       ORDER BY sort_order ASC, id ASC
@@ -484,7 +488,11 @@ function prepareSchedule(database, payload) {
     businessDate: getBusinessDate(startDate, businessDayStartHour),
     playersReady: payload.playersReady,
     note: payload.note,
-    assignments: payload.assignments,
+    assignments: payload.assignments.map((assignment) => ({
+      ...assignment,
+      salaryCents:
+        scriptRoles.find((role) => role.name === assignment.roleName)?.salaryCents ?? 0,
+    })),
   };
 }
 
@@ -530,6 +538,7 @@ function getSchedules(database, query) {
         schedule_roles.role_name AS roleName,
         schedule_roles.dm_id AS dmId,
         dms.name AS dmName,
+        schedule_roles.salary_cents AS salaryCents,
         schedule_roles.sort_order AS sortOrder
       FROM schedule_roles
       LEFT JOIN dms ON dms.id = schedule_roles.dm_id
@@ -581,6 +590,7 @@ function getScheduleById(database, id) {
         schedule_roles.role_name AS roleName,
         schedule_roles.dm_id AS dmId,
         dms.name AS dmName,
+        schedule_roles.salary_cents AS salaryCents,
         schedule_roles.sort_order AS sortOrder
       FROM schedule_roles
       LEFT JOIN dms ON dms.id = schedule_roles.dm_id
@@ -601,6 +611,7 @@ function formatSchedule(schedule, roles) {
       ...role,
       dmId: role.dmId ?? null,
       dmName: role.dmName ?? "DM 待定",
+      salaryCents: role.salaryCents ?? 0,
     })),
   };
 }
@@ -629,7 +640,8 @@ function getDmMonthlySummary(database, query) {
         schedules.start_at AS startAt,
         schedules.end_at AS endAt,
         schedules.business_date AS businessDate,
-        schedule_roles.role_name AS roleName
+        schedule_roles.role_name AS roleName,
+        schedule_roles.salary_cents AS salaryCents
       FROM schedule_roles
       JOIN dms ON dms.id = schedule_roles.dm_id
       JOIN schedules ON schedules.id = schedule_roles.schedule_id
@@ -653,6 +665,7 @@ function getDmMonthlySummary(database, query) {
         endAt: row.endAt,
         businessDate: row.businessDate,
         roleName: row.roleName,
+        salaryCents: row.salaryCents ?? 0,
       }));
 
     return {
@@ -660,6 +673,7 @@ function getDmMonthlySummary(database, query) {
       name: dm.name,
       isActive: Boolean(dm.isActive),
       total: details.length,
+      totalSalaryCents: details.reduce((sum, detail) => sum + detail.salaryCents, 0),
       details,
     };
   });
@@ -699,6 +713,7 @@ function buildMonthlyWorkbook(schedules, from, to) {
   summarySheet.columns = [
     { header: "DM", key: "dmName", width: 18 },
     { header: "总排班数", key: "total", width: 12 },
+    { header: "工资总和", key: "totalSalary", width: 14 },
     { header: "排班明细", key: "details", width: 80 },
   ];
 
@@ -707,17 +722,48 @@ function buildMonthlyWorkbook(schedules, from, to) {
     summarySheet.addRow({
       dmName: item.dmName,
       total: item.total,
+      totalSalary: centsToYuan(item.totalSalaryCents),
       details: item.details
         .map(
           (detail) =>
-            `${detail.startAt.slice(0, 10)} ${formatTime(detail.startAt)} ${detail.scriptName} ${detail.roleName}`,
+            `${detail.startAt.slice(0, 10)} ${formatTime(detail.startAt)} ${detail.scriptName} ${detail.roleName} ${centsToYuan(detail.salaryCents)}元`,
         )
         .join("；"),
     });
   }
 
+  const salarySheet = workbook.addWorksheet("工资明细");
+  salarySheet.columns = [
+    { header: "日期", key: "date", width: 14 },
+    { header: "时间", key: "time", width: 16 },
+    { header: "DM", key: "dmName", width: 18 },
+    { header: "剧本", key: "scriptName", width: 24 },
+    { header: "角色", key: "roleName", width: 18 },
+    { header: "房间", key: "roomName", width: 16 },
+    { header: "工资", key: "salary", width: 12 },
+  ];
+
+  for (const schedule of schedules) {
+    for (const role of schedule.roles) {
+      if (role.dmId === null) {
+        continue;
+      }
+
+      salarySheet.addRow({
+        date: schedule.startAt.slice(0, 10),
+        time: `${formatTime(schedule.startAt)}-${formatTime(schedule.endAt)}`,
+        dmName: role.dmName,
+        scriptName: schedule.scriptName,
+        roleName: role.roleName,
+        roomName: schedule.roomName,
+        salary: centsToYuan(role.salaryCents),
+      });
+    }
+  }
+
   styleWorksheet(scheduleSheet, `月度排班 ${from.slice(0, 10)} 至 ${to.slice(0, 10)}`);
   styleWorksheet(summarySheet, `DM月统计 ${from.slice(0, 7)}`);
+  styleWorksheet(salarySheet, `工资明细 ${from.slice(0, 7)}`);
 
   return workbook;
 }
@@ -736,17 +782,20 @@ function summarizeDmFromSchedules(schedules) {
           dmId: role.dmId,
           dmName: role.dmName,
           total: 0,
+          totalSalaryCents: 0,
           details: [],
         });
       }
 
       const item = map.get(role.dmId);
       item.total += 1;
+      item.totalSalaryCents += role.salaryCents ?? 0;
       item.details.push({
         scheduleId: schedule.id,
         scriptName: schedule.scriptName,
         startAt: schedule.startAt,
         roleName: role.roleName,
+        salaryCents: role.salaryCents ?? 0,
       });
     }
   }
@@ -983,6 +1032,10 @@ function getNextMonthDate(dateString) {
 
 function formatTime(value) {
   return value.slice(11, 16);
+}
+
+function centsToYuan(value) {
+  return Number((Number(value ?? 0) / 100).toFixed(2));
 }
 
 function validationError(message) {

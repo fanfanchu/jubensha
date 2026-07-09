@@ -153,6 +153,7 @@ function getScripts(database) {
         id,
         script_id AS scriptId,
         name,
+        salary_cents AS salaryCents,
         sort_order AS sortOrder
       FROM script_roles
       ORDER BY script_id ASC, sort_order ASC, id ASC
@@ -212,13 +213,13 @@ function saveScript(database, payload, id = null) {
 
     const insertRole = database.prepare(
       `
-      INSERT INTO script_roles (script_id, name, sort_order)
-      VALUES (?, ?, ?)
+      INSERT INTO script_roles (script_id, name, salary_cents, sort_order)
+      VALUES (?, ?, ?, ?)
       `,
     );
 
     payload.roles.forEach((role, index) => {
-      insertRole.run(id, role, index);
+      insertRole.run(id, role.name, role.salaryCents, index);
     });
   });
 
@@ -361,7 +362,7 @@ function parseScriptPayload(body) {
   const name = normalizeText(body?.name);
   const durationHours = Number(body?.durationHours);
   const maxParallelSessions = Number(body?.maxParallelSessions);
-  const roles = normalizeList(body?.roles);
+  const roles = normalizeScriptRoles(body?.roles);
 
   if (!name) {
     return { error: validationError("请填写剧本名") };
@@ -438,6 +439,84 @@ function normalizeList(value) {
         .map((item) => item.trim());
 
   return Array.from(new Set(values.map(normalizeText).filter(Boolean)));
+}
+
+function normalizeScriptRoles(value) {
+  const rawRoles = Array.isArray(value)
+    ? value
+    : parseScriptRoleText(value);
+
+  const roles = [];
+  const seenNames = new Set();
+
+  for (const item of rawRoles) {
+    const name = normalizeText(typeof item === "string" ? item : item?.name);
+    const salaryCents = typeof item === "string" ? 0 : normalizeSalaryInput(item);
+
+    if (!name || seenNames.has(name)) {
+      continue;
+    }
+
+    roles.push({
+      name,
+      salaryCents,
+    });
+    seenNames.add(name);
+  }
+
+  return roles;
+}
+
+function parseScriptRoleText(value) {
+  return String(value ?? "")
+    .split(/\n/)
+    .flatMap((line) => {
+      const trimmed = normalizeText(line);
+
+      if (!trimmed) {
+        return [];
+      }
+
+      const parts = trimmed.split(/[,\，]/).map(normalizeText).filter(Boolean);
+
+      if (parts.length === 2 && Number.isFinite(Number(parts[1]))) {
+        return [
+          {
+            name: parts[0],
+            salaryYuan: parts[1],
+          },
+        ];
+      }
+
+      return trimmed.split(/[,\n，、]/).map((name) => ({ name }));
+    });
+}
+
+function normalizeSalaryInput(item) {
+  if (item?.salaryCents !== undefined) {
+    return parseSalaryCents(item.salaryCents);
+  }
+
+  return yuanToCents(item?.salary ?? item?.salaryYuan);
+}
+
+function parseSalaryCents(value) {
+  if (value === null || value === undefined || value === "") {
+    return 0;
+  }
+
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number < 0) {
+    return 0;
+  }
+
+  return Number.isInteger(number) ? number : Math.round(number * 100);
+}
+
+function yuanToCents(value) {
+  const amount = Number(normalizeText(value));
+  return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) : 0;
 }
 
 function toBoolean(value, fallback) {
