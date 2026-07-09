@@ -88,6 +88,50 @@ export function createAdminHandlers(database) {
       response.json(getRooms(database));
     },
 
+    getSalaryLock(request, response) {
+      const month = normalizeMonth(request.query?.month);
+
+      if (!month) {
+        response.status(400).json(validationError("月份格式应为 YYYY-MM"));
+        return;
+      }
+
+      response.json(getSalaryLock(database, month));
+    },
+
+    lockSalaryMonth(request, response) {
+      const month = normalizeMonth(request.body?.month);
+
+      if (!month) {
+        response.status(400).json(validationError("月份格式应为 YYYY-MM"));
+        return;
+      }
+
+      database
+        .prepare(
+          `
+          INSERT INTO salary_locks (month)
+          VALUES (?)
+          ON CONFLICT(month) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+          `,
+        )
+        .run(month);
+
+      response.json(getSalaryLock(database, month));
+    },
+
+    unlockSalaryMonth(request, response) {
+      const month = normalizeMonth(request.body?.month);
+
+      if (!month) {
+        response.status(400).json(validationError("月份格式应为 YYYY-MM"));
+        return;
+      }
+
+      database.prepare("DELETE FROM salary_locks WHERE month = ?").run(month);
+      response.json(getSalaryLock(database, month));
+    },
+
     createRoom(request, response) {
       const payload = parseRoomPayload(request.body);
 
@@ -328,6 +372,25 @@ function getRooms(database) {
     }));
 }
 
+function getSalaryLock(database, month) {
+  const row = database
+    .prepare(
+      `
+      SELECT month, locked_at AS lockedAt, updated_at AS updatedAt
+      FROM salary_locks
+      WHERE month = ?
+      `,
+    )
+    .get(month);
+
+  return {
+    month,
+    locked: Boolean(row),
+    lockedAt: row?.lockedAt ?? null,
+    updatedAt: row?.updatedAt ?? null,
+  };
+}
+
 function saveRoom(database, payload, id = null) {
   if (id) {
     database
@@ -538,6 +601,11 @@ function toBoolean(value, fallback) {
 function parseId(value) {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function normalizeMonth(value) {
+  const month = normalizeText(value);
+  return /^\d{4}-\d{2}$/.test(month) ? month : "";
 }
 
 function recordExists(database, table, id) {

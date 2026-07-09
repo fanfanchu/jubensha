@@ -4,6 +4,7 @@ const baseUrl = process.env.SMOKE_BASE_URL ?? "http://localhost:3001";
 const adminPassword = process.env.SMOKE_ADMIN_PASSWORD ?? "admin123";
 const viewerPassword = process.env.SMOKE_VIEWER_PASSWORD ?? "view123";
 const unique = Date.now();
+const lockTestMonth = `2099-${String((unique % 12) + 1).padStart(2, "0")}`;
 
 const created = {
   scripts: [],
@@ -349,6 +350,29 @@ async function main() {
   assert(excel.contentType.includes("spreadsheetml"), "Excel 导出响应类型错误");
   assert(excel.buffer.subarray(0, 2).toString("utf8") === "PK", "Excel 导出文件格式错误");
 
+  const unlockedSalary = await request(`/api/admin/salary-lock?month=${lockTestMonth}`, {
+    headers: adminHeaders,
+  });
+  assert(unlockedSalary.locked === false, "工资锁定初始状态错误");
+
+  const lockedSalary = await request("/api/admin/salary-lock", {
+    method: "POST",
+    headers: adminHeaders,
+    body: {
+      month: lockTestMonth,
+    },
+  });
+  assert(lockedSalary.locked === true, "工资锁定失败");
+
+  const unlockedAgain = await request("/api/admin/salary-lock", {
+    method: "DELETE",
+    headers: adminHeaders,
+    body: {
+      month: lockTestMonth,
+    },
+  });
+  assert(unlockedAgain.locked === false, "工资解锁失败");
+
   await expectHttpError(
     `/api/admin/schedules/${firstSchedule.id}`,
     {
@@ -389,6 +413,7 @@ async function main() {
           "dm monthly summary",
           "dm salary summary",
           "monthly excel export",
+          "salary month lock",
         ],
       },
       null,

@@ -87,6 +87,12 @@ CREATE TABLE IF NOT EXISTS schedule_roles (
   UNIQUE (schedule_id, dm_id)
 );
 
+CREATE TABLE IF NOT EXISTS salary_locks (
+  month TEXT PRIMARY KEY,
+  locked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_script_roles_script_id
   ON script_roles(script_id);
 

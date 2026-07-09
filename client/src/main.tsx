@@ -13,16 +13,20 @@ import {
   Edit3,
   Eye,
   KeyRound,
+  Lock,
   LogOut,
   MapPin,
   Moon,
   Plus,
   RefreshCcw,
   Save,
+  Search,
   Settings,
   ShieldCheck,
   Sun,
   Trash2,
+  Unlock,
+  UserCheck,
   UsersRound,
   X,
 } from "lucide-react";
@@ -159,6 +163,13 @@ type DmMonthlySummary = {
     roleName: string;
     salaryCents: number;
   }>;
+};
+
+type SalaryLock = {
+  month: string;
+  locked: boolean;
+  lockedAt: string | null;
+  updatedAt: string | null;
 };
 
 type ScriptRoleForm = {
@@ -433,6 +444,9 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
   const [selectedDate, setSelectedDate] = useState(() => toDateOnly(new Date()));
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [dmSummary, setDmSummary] = useState<DmMonthlySummary[]>([]);
+  const [dms, setDms] = useState<Dm[]>([]);
+  const [salaryLock, setSalaryLock] = useState<SalaryLock | null>(null);
+  const [searchText, setSearchText] = useState("");
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
   const [creatingDate, setCreatingDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -442,9 +456,18 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
   const monthLabel = `${monthStart.getFullYear()}年${monthStart.getMonth() + 1}月`;
   const monthFrom = toDateOnly(monthStart);
   const monthTo = toDateOnly(addMonths(monthStart, 1));
+  const monthKey = monthFrom.slice(0, 7);
   const calendarDays = useMemo(() => getCalendarDays(monthStart), [monthStart]);
-  const schedulesByDate = useMemo(() => groupSchedulesByDate(schedules), [schedules]);
+  const displayedSchedules = useMemo(
+    () => filterSchedules(schedules, searchText),
+    [schedules, searchText],
+  );
+  const schedulesByDate = useMemo(() => groupSchedulesByDate(displayedSchedules), [displayedSchedules]);
   const selectedSchedules = schedulesByDate.get(selectedDate) ?? [];
+  const dmAvailability = useMemo(
+    () => getDmAvailability(dms, schedules, selectedDate),
+    [dms, schedules, selectedDate],
+  );
   const pendingDmSchedules = useMemo(
     () => schedules.filter((schedule) => schedule.roles.some((role) => role.dmId === null)),
     [schedules],
@@ -459,7 +482,12 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
   }, [monthFrom, monthTo, token, canManage]);
 
   async function loadMonthData() {
-    await Promise.all([loadSchedules(), canManage ? loadDmSummary() : Promise.resolve()]);
+    await Promise.all([
+      loadSchedules(),
+      canManage ? loadDmSummary() : Promise.resolve(),
+      canManage ? loadDms() : Promise.resolve(),
+      canManage ? loadSalaryLock() : Promise.resolve(),
+    ]);
   }
 
   async function loadSchedules() {
@@ -489,6 +517,53 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "DM 统计加载失败");
     }
+  }
+
+  async function loadDms() {
+    try {
+      const result = await apiFetch<Dm[]>("/api/admin/dms", { token });
+      setDms(result);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "DM 加载失败");
+    }
+  }
+
+  async function loadSalaryLock() {
+    try {
+      const result = await apiFetch<SalaryLock>(`/api/admin/salary-lock?month=${monthKey}`, {
+        token,
+      });
+      setSalaryLock(result);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "工资锁定状态加载失败");
+    }
+  }
+
+  async function toggleSalaryLock() {
+    if (salaryLock?.locked) {
+      if (!window.confirm(`确认解锁 ${monthKey} 工资表吗？`)) {
+        return;
+      }
+
+      const result = await apiFetch<SalaryLock>("/api/admin/salary-lock", {
+        token,
+        method: "DELETE",
+        body: { month: monthKey },
+      });
+      setSalaryLock(result);
+      return;
+    }
+
+    if (!window.confirm(`确认锁定 ${monthKey} 工资表吗？锁定后修改该月排班会提示影响已结算工资。`)) {
+      return;
+    }
+
+    const result = await apiFetch<SalaryLock>("/api/admin/salary-lock", {
+      token,
+      method: "POST",
+      body: { month: monthKey },
+    });
+    setSalaryLock(result);
   }
 
   async function exportMonthlyExcel() {
@@ -521,6 +596,15 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
   }
 
   async function deleteSchedule(schedule: Schedule) {
+    if (
+      salaryLock?.locked &&
+      !window.confirm(
+        `${monthKey} 工资表已锁定。\n\n删除这场排班可能影响已结算工资，确认继续删除吗？`,
+      )
+    ) {
+      return;
+    }
+
     if (!window.confirm(`确认删除《${schedule.scriptName}》这场排班吗？`)) {
       return;
     }
@@ -554,6 +638,16 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
             >
               <Plus size={16} />
               新增
+            </button>
+          ) : null}
+          {canManage ? (
+            <button
+              className={salaryLock?.locked ? "ghost-button lock-button locked" : "ghost-button lock-button"}
+              type="button"
+              onClick={toggleSalaryLock}
+            >
+              {salaryLock?.locked ? <Lock size={16} /> : <Unlock size={16} />}
+              {salaryLock?.locked ? "工资已锁" : "锁工资"}
             </button>
           ) : null}
           {canManage ? (
@@ -596,8 +690,33 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
       </div>
       <div className="month-title">
         <strong>{monthLabel}</strong>
-        <span>{loading ? "加载中" : `${schedules.length} 场`}</span>
+        <span>
+          {loading
+            ? "加载中"
+            : searchText.trim()
+              ? `${displayedSchedules.length}/${schedules.length} 场`
+              : `${schedules.length} 场`}
+        </span>
       </div>
+      <div className="search-row">
+        <Search size={17} />
+        <input
+          value={searchText}
+          onChange={(event) => setSearchText(event.target.value)}
+          placeholder="搜索剧本、DM、房间、备注"
+        />
+        {searchText ? (
+          <button className="ghost-button compact-button" type="button" onClick={() => setSearchText("")}>
+            清空
+          </button>
+        ) : null}
+      </div>
+      {salaryLock?.locked ? (
+        <div className="lock-notice">
+          <Lock size={16} />
+          {monthKey} 工资表已锁定，修改或删除该月排班会提示影响已结算工资。
+        </div>
+      ) : null}
       {error ? <p className="form-error">{error}</p> : null}
       <div className="calendar-content-grid">
         <div className="calendar-core">
@@ -664,6 +783,13 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
               <p className="empty-list">当天暂无排班</p>
             )}
           </section>
+          {canManage ? (
+            <DmAvailabilityPanel
+              assigned={dmAvailability.assigned}
+              available={dmAvailability.available}
+              selectedDate={selectedDate}
+            />
+          ) : null}
           {canManage ? <DmSummaryPanel items={dmSummary} monthLabel={monthLabel} /> : null}
         </div>
         <ReminderPanel
@@ -675,6 +801,7 @@ function CalendarPanel({ canManage, token }: { canManage: boolean; token: string
       {canManage && (creatingDate || editingSchedule) ? (
         <ScheduleModal
           initialDate={creatingDate ?? selectedDate}
+          isSalaryLocked={Boolean(salaryLock?.locked)}
           schedule={editingSchedule}
           token={token}
           onClose={() => {
@@ -731,6 +858,66 @@ function DmSummaryPanel({ items, monthLabel }: { items: DmMonthlySummary[]; mont
       ) : (
         <p className="empty-list">暂无 DM 统计</p>
       )}
+    </section>
+  );
+}
+
+function DmAvailabilityPanel({
+  assigned,
+  available,
+  selectedDate,
+}: {
+  assigned: Array<{ dm: Dm; schedules: Schedule[] }>;
+  available: Dm[];
+  selectedDate: string;
+}) {
+  return (
+    <section className="dm-availability-panel">
+      <div className="day-detail-head">
+        <h3>DM 空闲</h3>
+        <span>{formatDateLabel(selectedDate)}</span>
+      </div>
+      <div className="availability-grid">
+        <article className="availability-box">
+          <div className="availability-title">
+            <UserCheck size={16} />
+            <strong>可排 DM</strong>
+            <span>{available.length}</span>
+          </div>
+          {available.length ? (
+            <div className="tag-list">
+              {available.map((dm) => (
+                <span key={dm.id}>{dm.name}</span>
+              ))}
+            </div>
+          ) : (
+            <p className="mini-empty">暂无可排 DM</p>
+          )}
+        </article>
+        <article className="availability-box">
+          <div className="availability-title">
+            <Clock size={16} />
+            <strong>已排 DM</strong>
+            <span>{assigned.length}</span>
+          </div>
+          {assigned.length ? (
+            <div className="assigned-dm-list">
+              {assigned.map((item) => (
+                <div className="assigned-dm-item" key={item.dm.id}>
+                  <strong>{item.dm.name}</strong>
+                  <p>
+                    {item.schedules
+                      .map((schedule) => `${formatTime(schedule.startAt)} ${schedule.scriptName}`)
+                      .join("；")}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mini-empty">当天还没有 DM 排班</p>
+          )}
+        </article>
+      </div>
     </section>
   );
 }
@@ -922,12 +1109,14 @@ function ScheduleCard({
 
 function ScheduleModal({
   initialDate,
+  isSalaryLocked,
   onClose,
   onSaved,
   schedule,
   token,
 }: {
   initialDate: string;
+  isSalaryLocked: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
   schedule: Schedule | null;
@@ -1078,10 +1267,29 @@ function ScheduleModal({
     if (schedule) {
       const changes = getScheduleChanges(schedule, form, scripts, rooms, dms);
 
+      if (isSalaryLocked) {
+        changes.unshift({
+          label: "工资锁定提醒",
+          before: "当前月份工资表已锁定",
+          after: "保存后可能影响已结算工资",
+        });
+      }
+
       if (changes.length > 0) {
         setPendingChanges(changes);
         return;
       }
+    }
+
+    if (isSalaryLocked) {
+      setPendingChanges([
+        {
+          label: "工资锁定提醒",
+          before: "当前月份工资表已锁定",
+          after: "新增排班可能影响已结算工资",
+        },
+      ]);
+      return;
     }
 
     await saveSchedule();
@@ -2111,6 +2319,72 @@ function buildSchedulePayload(form: ScheduleFormState, excludeId?: number) {
         roleName,
         dmId: dmId === pendingDmValue ? null : Number(dmId),
       })),
+  };
+}
+
+function filterSchedules(schedules: Schedule[], query: string) {
+  const keyword = query.trim().toLowerCase();
+
+  if (!keyword) {
+    return schedules;
+  }
+
+  return schedules.filter((schedule) => {
+    const haystack = [
+      schedule.scriptName,
+      schedule.roomName,
+      schedule.note,
+      schedule.businessDate,
+      schedule.startAt.slice(0, 10),
+      ...schedule.roles.flatMap((role) => [role.roleName, role.dmName]),
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(keyword);
+  });
+}
+
+function getDmAvailability(dms: Dm[], schedules: Schedule[], selectedDate: string) {
+  const assignedMap = new Map<number, { dm: Dm; schedules: Schedule[] }>();
+  const dmsById = new Map(dms.map((dm) => [dm.id, dm]));
+
+  for (const schedule of schedules.filter((item) => item.businessDate === selectedDate)) {
+    for (const role of schedule.roles) {
+      if (role.dmId === null) {
+        continue;
+      }
+
+      const dm = dmsById.get(role.dmId);
+
+      if (!dm) {
+        continue;
+      }
+
+      if (!assignedMap.has(dm.id)) {
+        assignedMap.set(dm.id, {
+          dm,
+          schedules: [],
+        });
+      }
+
+      const item = assignedMap.get(dm.id);
+      if (item && !item.schedules.some((existing) => existing.id === schedule.id)) {
+        item.schedules.push(schedule);
+      }
+    }
+  }
+
+  const assigned = Array.from(assignedMap.values()).sort((left, right) =>
+    left.dm.name.localeCompare(right.dm.name, "zh-CN"),
+  );
+  const available = dms
+    .filter((dm) => dm.isActive && !assignedMap.has(dm.id))
+    .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+
+  return {
+    assigned,
+    available,
   };
 }
 

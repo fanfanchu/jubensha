@@ -397,6 +397,43 @@ h2 {
   font-size: 18px;
 }
 
+.search-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--muted);
+  background: var(--panel-soft);
+}
+
+.search-row input {
+  width: 100%;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  outline: 0;
+}
+
+.lock-button.locked,
+.lock-notice {
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+}
+
+.lock-notice {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--warning-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
 .month-title span,
 .day-detail-head span,
 .schedule-card-head span {
@@ -591,6 +628,73 @@ h2 {
   gap: 12px;
   border-top: 1px solid var(--border);
   padding-top: 16px;
+}
+
+.dm-availability-panel {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.availability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.availability-box {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-softer);
+}
+
+.availability-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--heading);
+}
+
+.availability-title span {
+  display: inline-grid;
+  min-width: 24px;
+  height: 24px;
+  margin-left: auto;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--primary-text);
+  background: var(--primary-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.assigned-dm-list {
+  display: grid;
+  gap: 8px;
+}
+
+.assigned-dm-item {
+  display: grid;
+  gap: 4px;
+  border-radius: 8px;
+  padding: 9px;
+  background: var(--panel);
+}
+
+.assigned-dm-item strong {
+  color: var(--text);
+}
+
+.assigned-dm-item p,
+.mini-empty {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .reminder-panel {
@@ -1276,6 +1380,14 @@ h2 {
   .month-title {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .search-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .search-row button {
+    grid-column: 1 / -1;
   }
 
   .schedule-card-head {
